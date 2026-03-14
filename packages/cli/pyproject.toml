@@ -3,7 +3,7 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentfile"
+name = "ninetrix"
 version = "0.1.0"
 description = "CLI for building and deploying AI agents as containers"
 readme = "README.md"
