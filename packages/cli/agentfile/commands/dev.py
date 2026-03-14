@@ -160,8 +160,31 @@ def _compose_down(compose_file: Path) -> None:
     _compose(compose_file, "down", check=False)
 
 
-def _poll_health(timeout: int = 60) -> dict[str, bool]:
-    """Poll HTTP /health endpoints. Returns {service: is_healthy}."""
+def _container_state(compose_file: Path, service: str) -> str:
+    """Return docker compose container state: running, exited, starting, missing."""
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(compose_file), "ps", "--format", "json", service],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return "missing"
+    import json as _json
+    try:
+        rows = [_json.loads(l) for l in result.stdout.strip().splitlines() if l.strip()]
+        if not rows:
+            return "missing"
+        state = rows[0].get("State", rows[0].get("Status", "")).lower()
+        if "running" in state:
+            return "running"
+        if "exit" in state or "dead" in state:
+            return "exited"
+        return "starting"
+    except Exception:
+        return "unknown"
+
+
+def _poll_health(compose_file: Path, timeout: int = 60) -> dict[str, bool]:
+    """Poll HTTP health endpoints and container states."""
     status = {s["name"]: False for s in _STACK}
     deadline = time.time() + timeout
 
@@ -171,12 +194,10 @@ def _poll_health(timeout: int = 60) -> dict[str, bool]:
                 continue
             url = svc["health_url"]
             if url is None:
-                # postgres: healthy once api is healthy
-                # mcp-worker: healthy once mcp-gateway is healthy
-                if svc["name"] == "postgres" and status.get("api"):
-                    status["postgres"] = True
-                elif svc["name"] == "mcp-worker" and status.get("mcp-gateway"):
-                    status["mcp-worker"] = True
+                # Check container is running via docker compose ps
+                state = _container_state(compose_file, svc["name"])
+                if state == "running":
+                    status[svc["name"]] = True
                 continue
             try:
                 r = httpx.get(url, timeout=2)
@@ -190,6 +211,21 @@ def _poll_health(timeout: int = 60) -> dict[str, bool]:
         time.sleep(1)
 
     return status
+
+
+def _failed_logs(compose_file: Path, status: dict[str, bool]) -> str:
+    """Return last 10 log lines for any failed service."""
+    lines = []
+    for name, ok in status.items():
+        if ok:
+            continue
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "logs", "--tail=10", name],
+            capture_output=True, text=True,
+        )
+        if result.stdout.strip():
+            lines.append(f"\n[{name}]\n{result.stdout.strip()}")
+    return "\n".join(lines)
 
 
 def _status_table(status: dict[str, bool], final: bool = False) -> Table:
@@ -253,7 +289,7 @@ def dev_command(pull: bool, reset: bool, detach: bool) -> None:
     from rich.live import Live
     with Live(console=console, refresh_per_second=2) as live:
         for _ in range(60):
-            status = _poll_health(timeout=2)
+            status = _poll_health(compose_file, timeout=2)
             live.update(_status_table(status, final=False))
             if all(status.values()):
                 break
@@ -263,7 +299,9 @@ def dev_command(pull: bool, reset: bool, detach: bool) -> None:
     failed = [k for k, v in status.items() if not v]
     if failed:
         console.print(f"\n[red]Services did not become healthy: {', '.join(failed)}[/red]")
-        console.print(f"[dim]Logs: docker compose -f {compose_file} logs[/dim]")
+        logs = _failed_logs(compose_file, status)
+        if logs:
+            console.print(f"[dim]{logs}[/dim]")
         raise click.ClickException("Stack did not start cleanly.")
 
     if detach:
