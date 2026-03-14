@@ -1,0 +1,40 @@
+gateway_url: "ws://localhost:8080"
+workspace_id: "local"
+worker_name: "default"
+
+servers: []
+  # ── Uncomment to enable built-in MCP servers ─────────────────────────────────
+  #
+  # - name: filesystem
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-filesystem"
+  #   args: ["${HOME}"]
+  #
+  # - name: brave-search
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-brave-search"
+  #   env:
+  #     BRAVE_API_KEY: "${BRAVE_API_KEY}"
+  #
+  # - name: github
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-github"
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+  #
+  # - name: slack
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-slack"
+  #   env:
+  #     SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+  #
+  # - name: postgres
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-postgres"
+  #   args: ["${DATABASE_URL}"]
+  #
+  # - name: puppeteer
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-puppeteer"
+  #
+  # ─────────────────────────────────────────────────────────────────────────────

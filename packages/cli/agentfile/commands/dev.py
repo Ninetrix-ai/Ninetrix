@@ -46,11 +46,11 @@ _DEFAULT_WORKER_CONFIG = "mcp-worker.default.yaml"    # inside mcp_worker packag
 
 def _get_compose_file() -> Path:
     """Return path to the bundled docker-compose.dev.yml."""
-    # 1. Try package_data (installed package)
+    # 1. Try package_data (installed via pip/pipx/uv)
     try:
-        ref = importlib.resources.files("agentfile") / _COMPOSE_FILE_REL
+        ref = importlib.resources.files("agentfile.compose") / "docker-compose.dev.yml"
         with importlib.resources.as_file(ref) as p:
-            if p.exists():
+            if Path(p).exists():
                 return Path(p)
     except Exception:
         pass
@@ -76,12 +76,21 @@ def _ensure_mcp_worker_config() -> None:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    # Try to locate the default config shipped with mcp-worker package
+    # Try package_data first (installed via pip/pipx/uv)
+    try:
+        ref = importlib.resources.files("agentfile.compose") / "mcp-worker.default.yaml"
+        with importlib.resources.as_file(ref) as src:
+            if Path(src).exists():
+                shutil.copy(src, dest)
+                console.print(f"[dim]Created {dest} — edit to enable MCP servers.[/dim]")
+                return
+    except Exception:
+        pass
+
+    # Fallback for editable install
     candidates = [
         Path(__file__).resolve().parent.parent.parent.parent.parent
         / "packages" / "mcp-worker" / "mcp-worker.default.yaml",
-        Path(__file__).resolve().parent.parent.parent.parent.parent
-        / "mcp-worker" / "mcp-worker.default.yaml",
     ]
     for src in candidates:
         if src.exists():
