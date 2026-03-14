@@ -37,7 +37,7 @@ jobs:
       - name: Build dashboard and copy into api/static
         run: |
           corepack enable
-          pnpm install
+          pnpm install --no-frozen-lockfile
           pnpm turbo run build --filter=dashboard
           mkdir -p packages/api/static/dashboard
           cp -r packages/dashboard/out/* packages/api/static/dashboard/
