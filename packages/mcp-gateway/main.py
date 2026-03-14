@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from mcp_gateway.routers import admin, mcp, workers
+from routers import admin, mcp, workers
 
 logging.basicConfig(
     level=logging.INFO,
