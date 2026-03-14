@@ -119,9 +119,22 @@ def _compose(compose_file: Path, *args: str, check: bool = True) -> subprocess.C
 def _compose_up(compose_file: Path, pull: bool) -> None:
     if pull:
         console.print("[dim]Pulling latest images…[/dim]")
-        _compose(compose_file, "pull")
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "pull"],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            console.print("[dim]Images not on registry yet — building locally…[/dim]")
+            _compose(compose_file, "build")
     console.print("[dim]Starting services…[/dim]\n")
-    _compose(compose_file, "up", "-d", "--remove-orphans")
+    # --build ensures local source is used if the remote image was never pulled
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(compose_file), "up", "-d", "--remove-orphans"],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        console.print("[dim]Remote images not found — building from source…[/dim]")
+        _compose(compose_file, "up", "-d", "--remove-orphans", "--build")
 
 
 def _compose_down(compose_file: Path) -> None:
