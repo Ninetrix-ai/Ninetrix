@@ -1,11 +1,11 @@
 {
-  "name": "local-app",
+  "name": "dashboard",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:static": "next build && cp -r out/* ../local-server/static/dashboard/ && cp -r public/* ../local-server/public/",
+    "build:static": "next build && cp -r out/* ../api/static/dashboard/",
     "start": "next start",
     "lint": "eslint"
   },
