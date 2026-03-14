@@ -46,3 +46,4 @@ app.include_router(runners.router, prefix="/v1/runners", tags=["runners"])
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
