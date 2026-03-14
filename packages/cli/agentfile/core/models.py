@@ -122,7 +122,7 @@ class Trigger:
     type: str                       # "webhook" | "schedule"
     endpoint: Optional[str] = None
     cron: Optional[str] = None
-    port: int = 8000                # webhook listen port
+    port: int = 9100                # webhook listen port
     message: str = ""               # schedule: message injected each fire
     target_agent: Optional[str] = None  # multi-agent: which agent gets this trigger
 
@@ -268,7 +268,7 @@ def _parse_trigger(t: dict) -> Trigger:
         type=t["type"],
         endpoint=t.get("endpoint"),
         cron=t.get("cron"),
-        port=int(t.get("port", 8000)),
+        port=int(t.get("port", 9100)),
         message=str(t.get("message", "") or ""),
         target_agent=t.get("target_agent"),
     )
