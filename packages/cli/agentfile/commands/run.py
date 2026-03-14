@@ -81,6 +81,26 @@ def _docker_url(url: str) -> str:
     )
 
 
+_LOCAL_API_URL = "http://localhost:8000"
+_SECRET_FILE = Path.home() / ".agentfile" / ".api-secret"
+
+
+def _is_local_api_running() -> bool:
+    """Return True if the local Ninetrix API is reachable on localhost:8000."""
+    try:
+        r = httpx.get(f"{_LOCAL_API_URL}/health", timeout=1.0)
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
+def _read_machine_secret() -> str | None:
+    """Return the machine secret written by the local API on startup."""
+    if _SECRET_FILE.exists():
+        return _SECRET_FILE.read_text().strip() or None
+    return None
+
+
 def _inject_integration_credentials(env: dict[str, str]) -> None:
     """Query the Integration Hub API and inject credentials as env vars. Silent on failure."""
     from agentfile.core.auth import auth_headers
@@ -238,6 +258,14 @@ def run_cmd(agentfile_path: str, image: str | None, tag: str, extra_env: tuple[s
     _api_url = os.environ.get("AGENTFILE_API_URL") or _load_dotenv_key("AGENTFILE_API_URL")
     if _api_url:
         env["AGENTFILE_API_URL"] = _docker_url(_api_url)
+    elif _is_local_api_running():
+        # Auto-detect: local stack is up (ninetrix dev) — wire the agent to it automatically.
+        env.setdefault("AGENTFILE_API_URL", "http://host.docker.internal:8000")
+        if not env.get("AGENTFILE_RUNNER_TOKEN"):
+            _secret = _read_machine_secret()
+            if _secret:
+                env["AGENTFILE_RUNNER_TOKEN"] = _secret
+        console.print("  [dim]Local API detected → telemetry will be sent to http://localhost:8000[/dim]\n")
 
     # MCP Gateway — always forward gateway vars so `ninetrix run --image` works
     # from any directory, even if the local agentfile.yaml doesn't have mcp_gateway:.

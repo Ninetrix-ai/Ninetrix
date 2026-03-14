@@ -226,6 +226,10 @@ async def create_runner_events_table() -> None:
         CREATE INDEX IF NOT EXISTS checkpoints_thread_id_idx
         ON agentfile_checkpoints (thread_id)
     """)
+    await pool().execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS checkpoints_thread_step_uidx
+        ON agentfile_checkpoints (thread_id, step_index)
+    """)
     # Ensure parent_trace_id column exists (migration for older schemas)
     await pool().execute("""
         ALTER TABLE agentfile_checkpoints

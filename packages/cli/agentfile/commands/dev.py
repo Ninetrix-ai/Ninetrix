@@ -46,18 +46,31 @@ _DEFAULT_WORKER_CONFIG = "mcp-worker.default.yaml"    # inside mcp_worker packag
 
 def _get_compose_file() -> Path:
     """Return path to the bundled docker-compose.dev.yml."""
+    import os
+
+    # 0. Explicit override
+    if override := os.getenv("NINETRIX_COMPOSE_FILE"):
+        p = Path(override)
+        if p.exists():
+            return p
+        raise click.ClickException(
+            f"NINETRIX_COMPOSE_FILE={override!r} does not exist."
+        )
+
     # 1. Try package_data (installed via pip/pipx/uv)
     try:
         ref = importlib.resources.files("agentfile.compose") / "docker-compose.dev.yml"
+        # Use as_file but copy the path before the context manager closes
         with importlib.resources.as_file(ref) as p:
-            if Path(p).exists():
-                return Path(p)
+            resolved = Path(p).resolve()
+        if resolved.exists():
+            return resolved
     except Exception:
         pass
 
-    # 2. Fallback for editable install — walk up to repo root
+    # 2. Fallback for editable install — walk up to find infra/compose/
     here = Path(__file__).resolve().parent
-    for _ in range(6):
+    for _ in range(8):
         candidate = here / "infra" / "compose" / "docker-compose.dev.yml"
         if candidate.exists():
             return candidate
@@ -108,6 +121,29 @@ def _ensure_mcp_worker_config() -> None:
     console.print(f"[dim]Created minimal {dest}[/dim]")
 
 
+_SECRET_FILE = Path.home() / ".agentfile" / ".api-secret"
+
+
+def _ensure_host_secret() -> str:
+    """Generate or load the machine secret on the host.
+
+    This is the same file the API would write inside its container, but by
+    generating it here first and passing it as AGENTFILE_RUNNER_TOKENS we ensure
+    the host CLI and agent containers can authenticate against the Dockerised API
+    with zero manual configuration.
+    """
+    import secrets as _secrets
+    _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if _SECRET_FILE.exists():
+        secret = _SECRET_FILE.read_text().strip()
+        if secret:
+            return secret
+    secret = _secrets.token_urlsafe(32)
+    _SECRET_FILE.write_text(secret)
+    _SECRET_FILE.chmod(0o600)
+    return secret
+
+
 def _check_docker() -> None:
     result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
     if result.returncode != 0:
@@ -118,28 +154,39 @@ def _check_docker() -> None:
         )
 
 
-def _compose(compose_file: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def _compose_env(secret: str) -> dict:
+    """Build env for all docker compose subprocesses — injects the host secret."""
+    import os
+    env = os.environ.copy()
+    env["AGENTFILE_RUNNER_TOKENS"] = secret
+    return env
+
+
+def _compose(compose_file: Path, *args: str, secret: str = "", check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", "compose", "-f", str(compose_file), *args],
         check=check,
+        env=_compose_env(secret) if secret else None,
     )
 
 
-def _compose_up(compose_file: Path, pull: bool) -> None:
+def _compose_up(compose_file: Path, pull: bool, secret: str) -> None:
     if pull:
         console.print("[dim]Pulling latest images…[/dim]")
         result = subprocess.run(
             ["docker", "compose", "-f", str(compose_file), "pull"],
             capture_output=True,
+            env=_compose_env(secret),
         )
         if result.returncode != 0:
             console.print("[dim]Images not on registry yet — building locally…[/dim]")
-            _compose(compose_file, "build")
-    console.print("[dim]Starting services…[/dim]\n")
+            _compose(compose_file, "build", secret=secret)
+    console.print("[dim]Starting services…[/dim]")
     result = subprocess.run(
         ["docker", "compose", "-f", str(compose_file), "up", "-d", "--remove-orphans"],
         capture_output=True,
         text=True,
+        env=_compose_env(secret),
     )
     if result.returncode != 0:
         if "not found" in result.stderr or "denied" in result.stderr:
@@ -276,25 +323,31 @@ def dev_command(pull: bool, reset: bool, detach: bool) -> None:
     _check_docker()
     compose_file = _get_compose_file()
     _ensure_mcp_worker_config()
+    secret = _ensure_host_secret()
 
     if reset:
         console.print("[yellow]Wiping volumes…[/yellow]")
-        _compose(compose_file, "down", "-v", check=False)
+        _compose(compose_file, "down", "-v", secret=secret, check=False)
 
-    _compose_up(compose_file, pull=pull)
+    _compose_up(compose_file, pull=pull, secret=secret)
 
-    console.print("[dim]Waiting for services…[/dim]\n")
-
-    # Live-update the status while polling
+    # Live-update the status while polling — spinner + table, no duplicate print
     from rich.live import Live
-    with Live(console=console, refresh_per_second=2) as live:
+    from rich.console import Group
+    from rich.spinner import Spinner
+
+    with Live(console=console, refresh_per_second=4) as live:
         for _ in range(60):
             status = _poll_health(compose_file, timeout=2)
-            live.update(_status_table(status, final=False))
             if all(status.values()):
+                live.update(_status_table(status, final=True))
                 break
-
-    console.print(_status_table(status, final=True))
+            live.update(Group(
+                Spinner("dots", text=" Waiting for services…", style="dim"),
+                _status_table(status, final=False),
+            ))
+        else:
+            live.update(_status_table(status, final=True))
 
     failed = [k for k, v in status.items() if not v]
     if failed:
@@ -312,11 +365,12 @@ def dev_command(pull: bool, reset: bool, detach: bool) -> None:
         ["docker", "compose", "-f", str(compose_file), "logs", "-f", "--no-log-prefix"],
         stdout=sys.stdout,
         stderr=sys.stderr,
+        env=_compose_env(secret),
     )
     try:
         log_proc.wait()
     except KeyboardInterrupt:
         console.print("\n[yellow]Stopping services…[/yellow]")
         log_proc.terminate()
-        _compose_down(compose_file)
+        _compose(compose_file, "down", secret=secret, check=False)
         console.print("[green]All services stopped.[/green]")
