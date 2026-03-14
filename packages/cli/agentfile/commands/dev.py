@@ -170,7 +170,7 @@ def _container_state(compose_file: Path, service: str) -> str:
         return "missing"
     import json as _json
     try:
-        rows = [_json.loads(l) for l in result.stdout.strip().splitlines() if l.strip()]
+        rows = [_json.loads(line) for line in result.stdout.strip().splitlines() if line.strip()]
         if not rows:
             return "missing"
         state = rows[0].get("State", rows[0].get("Status", "")).lower()
