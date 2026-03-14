@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from ninetrix_api import db
 from ninetrix_api.auth import init_machine_secret
@@ -47,3 +50,13 @@ app.include_router(runners.router, prefix="/v1/runners", tags=["runners"])
 async def health():
     return {"status": "ok"}
 
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/dashboard/")
+
+
+# Serve the pre-built Next.js dashboard (static export) at /dashboard
+_dashboard_dir = Path(__file__).parent / "static" / "dashboard"
+if _dashboard_dir.exists():
+    app.mount("/dashboard", StaticFiles(directory=str(_dashboard_dir), html=True), name="dashboard")
