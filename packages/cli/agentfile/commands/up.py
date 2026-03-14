@@ -127,10 +127,24 @@ def _build_agent_env(
                 env[var_name] = val
 
     # Forward SaaS credentials so agents can phone home with thread events.
+    # Rewrite localhost → host.docker.internal so containers can reach the host API.
     for _var in ("AGENTFILE_RUNNER_TOKEN", "AGENTFILE_API_URL"):
         _val = os.environ.get(_var) or _load_dotenv_key(_var)
         if _val:
+            if _var == "AGENTFILE_API_URL":
+                _val = _val.replace("localhost", "host.docker.internal") \
+                           .replace("127.0.0.1", "host.docker.internal")
             env[_var] = _val
+
+    # Forward MCP gateway connection vars — rewrite localhost so containers can reach
+    # a gateway running on the host (e.g. started by `ninetrix dev`).
+    for _var in ("MCP_GATEWAY_URL", "MCP_GATEWAY_TOKEN", "MCP_GATEWAY_WORKSPACE"):
+        _val = os.environ.get(_var) or _load_dotenv_key(_var)
+        if _val:
+            if _var == "MCP_GATEWAY_URL":
+                _val = _val.replace("localhost", "host.docker.internal") \
+                           .replace("127.0.0.1", "host.docker.internal")
+            env.setdefault(_var, _val)
 
     for peer_name, peer_url in peer_urls.items():
         if peer_name != agent_name:

@@ -45,7 +45,15 @@ def cli() -> None:
       ninetrix build         build Docker image(s)
       ninetrix run           run entry agent locally
       ninetrix deploy        push & deploy to a registry
-      ninetrix mcp list      inspect MCP tool integrations
+
+    \b
+    MCP tools (after `ninetrix dev`):
+      ninetrix mcp status    what's running in the gateway right now
+      ninetrix mcp add       add a tool server (e.g. github, slack, notion)
+      ninetrix mcp remove    remove a tool server
+      ninetrix mcp test      test tools via the live gateway
+      ninetrix mcp list      cross-ref gateway tools vs agentfile.yaml
+      ninetrix mcp catalog   browse available servers
 
     \b
     Multi-agent warm pool:

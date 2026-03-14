@@ -34,6 +34,7 @@ _SERVER_CRED_VARS: dict[str, list[str]] = {
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _find_compose_file() -> Path | None:
+    """Find docker-compose.gateway.yml (standalone gateway stack)."""
     candidates = [
         Path(__file__).parent.parent.parent / "docker-compose.gateway.yml",
         Path(__file__).parent.parent.parent.parent / "docker-compose.gateway.yml",
@@ -45,17 +46,96 @@ def _find_compose_file() -> Path | None:
     return None
 
 
-def _gateway_url() -> str:
-    return os.environ.get("MCP_GATEWAY_URL", "http://localhost:8000")
-
-
-def _find_worker_config(compose: Path) -> Path | None:
-    """Find mcp-worker.yaml or .example relative to the compose file."""
-    worker_dir = compose.parent.parent / "mcp-worker"
-    for name in ("mcp-worker.yaml", "mcp-worker.yaml.example"):
-        p = worker_dir / name
+def _find_dev_compose_file() -> Path | None:
+    """Find docker-compose.dev.yml (full dev stack started by `ninetrix dev`)."""
+    env_override = os.environ.get("NINETRIX_COMPOSE_FILE")
+    if env_override:
+        p = Path(env_override)
         if p.exists():
             return p
+
+    # Walk up from cwd looking for infra/compose/docker-compose.dev.yml
+    current = Path.cwd()
+    for _ in range(6):
+        candidate = current / "infra" / "compose" / "docker-compose.dev.yml"
+        if candidate.exists():
+            return candidate
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+    # Package data fallback
+    try:
+        import importlib.resources as _ir
+        pkg = _ir.files("agentfile.compose")
+        p = Path(str(pkg)) / "docker-compose.dev.yml"
+        if p.exists():
+            return p
+    except Exception:
+        pass
+
+    return None
+
+
+def _find_active_compose_file() -> Path | None:
+    """Return whichever compose file is active: dev stack first, gateway standalone second."""
+    return _find_dev_compose_file() or _find_compose_file()
+
+
+def restart_worker(compose: Path | None = None) -> bool:
+    """Restart the mcp-worker service with fresh credentials.
+
+    Tries the dev-stack compose first, then the standalone gateway compose.
+    Returns True on success, False if no compose file found or restart failed.
+    """
+    if compose is None:
+        compose = _find_active_compose_file()
+    if compose is None:
+        return False
+
+    proc_env = _build_proc_env(compose)
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(compose), "up", "-d", "--force-recreate", "mcp-worker"],
+        env=proc_env,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def _gateway_http_url() -> str:
+    """Return the HTTP base URL for gateway admin/health calls.
+
+    Converts ws:// → http:// and wss:// → https:// if the user set MCP_GATEWAY_URL
+    as a WebSocket URL.  Defaults to port 8080 (the gateway, not the API).
+    """
+    raw = os.environ.get("MCP_GATEWAY_URL", "http://localhost:8080")
+    return raw.replace("ws://", "http://").replace("wss://", "https://")
+
+
+# Keep old name as alias so existing callers don't break
+_gateway_url = _gateway_http_url
+
+
+def _find_worker_config(compose: Path | None = None) -> Path | None:
+    """Find the active mcp-worker.yaml.
+
+    Checks (in order):
+      1. ./mcp-worker.yaml         — project-local
+      2. ~/.agentfile/mcp-worker.yaml — global default
+      3. Relative to compose file  — repo mcp-worker package
+    """
+    from agentfile.core.worker_config import _PROJECT_CONFIG, _GLOBAL_CONFIG
+    if _PROJECT_CONFIG.exists():
+        return _PROJECT_CONFIG
+    if _GLOBAL_CONFIG.exists():
+        return _GLOBAL_CONFIG
+    if compose is not None:
+        worker_dir = compose.parent.parent / "mcp-worker"
+        for name in ("mcp-worker.yaml", "mcp-worker.yaml.example"):
+            p = worker_dir / name
+            if p.exists():
+                return p
     return None
 
 
@@ -94,16 +174,19 @@ def _collect_creds(server_names: list[str], dotenv: dict[str, str]) -> dict[str,
     return result
 
 
-def _build_proc_env(compose: Path | None) -> dict[str, str]:
+def _build_proc_env(compose: Path | None = None) -> dict[str, str]:
     """Build subprocess env with auto-collected credentials injected."""
     dotenv = _load_dotenv()
-    if compose:
+    from agentfile.core import worker_config as _wc
+    server_names = _wc.list_servers()
+    if not server_names and compose:
+        # Fallback: parse server names from file next to compose
         worker_cfg = _find_worker_config(compose)
         if worker_cfg:
             server_names = _parse_server_names(worker_cfg)
-            creds = _collect_creds(server_names, dotenv)
-            if creds:
-                return {**os.environ, **creds}
+    creds = _collect_creds(server_names, dotenv)
+    if creds:
+        return {**os.environ, **creds}
     return dict(os.environ)
 
 
@@ -372,13 +455,11 @@ def gateway_doctor() -> None:
     console.print(f"\n  [bold]Servers[/bold]  ({total_tools} total tool(s))\n")
 
     # ── 4. Cross-reference with mcp-worker.yaml ────────────────────────────────
-    compose = _find_compose_file()
-    configured_servers: list[str] = []
-    if compose:
-        worker_cfg = _find_worker_config(compose)
-        if worker_cfg:
-            configured_servers = _parse_server_names(worker_cfg)
-            console.print(f"  [dim]Config: {worker_cfg}[/dim]\n")
+    from agentfile.core import worker_config as _wc
+    configured_servers = _wc.list_servers()
+    worker_cfg_path = _wc.find_config_path()
+    if configured_servers:
+        console.print(f"  [dim]Config: {worker_cfg_path}[/dim]\n")
 
     dotenv = _load_dotenv()
     fixes: list[str] = []

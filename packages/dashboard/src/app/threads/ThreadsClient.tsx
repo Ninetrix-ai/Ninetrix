@@ -204,7 +204,7 @@ function TopNav({
           }}
         >
           <img
-            src="/public/ninetrix-logo.png"
+            src="/dashboard/ninetrix-logo.png"
             alt="Ninetrix"
             width={26}
             height={26}
@@ -260,7 +260,6 @@ function TopNav({
               color: tab.active ? "var(--text-primary)" : "var(--text-muted)",
               background: tab.active ? "var(--border-strong)" : "transparent",
               textDecoration: "none",
-              cursor: tab.active ? "default" : "not-allowed",
               transition: "background 0.15s, color 0.15s",
             }}
           >

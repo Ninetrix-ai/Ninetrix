@@ -61,36 +61,20 @@ def build_context(
     mcp_gateway_token     = mcp_gateway.token        if mcp_gateway else ""
     mcp_gateway_workspace = mcp_gateway.workspace_id if mcp_gateway else "default"
 
+    # Local MCP subprocess mode has been removed.
+    # All MCP tools now route through the MCP gateway/worker infrastructure.
+    # use_mcp_gateway is True whenever the agent has any mcp:// tools.
+    has_any_mcp_tools = any(t.is_mcp() for t in agent.tools)
+    if has_any_mcp_tools and not use_mcp_gateway:
+        # No explicit mcp_gateway: block in yaml — gateway URL/token/workspace
+        # will be read purely from env vars (MCP_GATEWAY_URL, MCP_GATEWAY_TOKEN,
+        # MCP_GATEWAY_WORKSPACE) at runtime.
+        use_mcp_gateway = True
+
     needs_node    = False
     needs_uv      = False
     has_mcp_tools = False
     mcp_tool_defs: list[dict] = []
-
-    if use_mcp_gateway:
-        # In gateway mode tools are discovered at runtime — no local server setup needed
-        has_mcp_tools = False
-    else:
-        for tool in agent.tools:
-            if not tool.is_mcp():
-                continue
-            has_mcp_tools = True
-            sdef = resolve(tool.mcp_name)
-            if sdef is None:
-                if _warn:
-                    _warn(
-                        f"MCP server '{tool.mcp_name}' is not in the registry. "
-                        f"Run: ninetrix mcp add {tool.mcp_name} ..."
-                    )
-            else:
-                if sdef.type == "npx":
-                    needs_node = True
-                if sdef.type == "uvx":
-                    needs_uv = True
-            mcp_tool_defs.append({
-                "alias":        tool.name,
-                "registry_key": tool.mcp_name,
-                "sdef":         sdef,
-            })
 
     composio_tool_defs = [
         {"app": t.composio_app, "actions": t.actions}

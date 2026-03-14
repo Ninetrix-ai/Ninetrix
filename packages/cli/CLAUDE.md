@@ -22,6 +22,127 @@ agentfile mcp test duckduckgo
 
 There is no test suite, linting config, or CI setup in this repository.
 
+---
+
+## Full Local Dev Stack (`ninetrix dev`)
+
+`ninetrix dev` starts the **complete local development stack** as Docker containers. It is the recommended way to develop with Ninetrix — run it once and everything (API, database, MCP gateway, MCP worker) comes up together.
+
+### What gets started
+
+| Service | Port | Description |
+|---------|------|-------------|
+| `postgres` | 5432 | Local PostgreSQL for agent checkpoints |
+| `api` | 8000 | FastAPI checkpoint reader + dashboard backend |
+| `mcp-gateway` | 8080 | MCP tool routing hub — agents call this via HTTP |
+| `mcp-worker` | — | MCP subprocess bridge — connects outbound WS to gateway |
+
+Compose file: `infra/compose/docker-compose.dev.yml`
+
+### First Run (auto-setup)
+
+On first run, `ninetrix dev` automatically:
+1. Creates `~/.agentfile/mcp-worker.yaml` with an empty `servers: []` config
+2. Generates `~/.agentfile/.api-secret` (machine auth token)
+3. Pulls Docker images and starts all four services
+
+### `.env` file — where to place it
+
+Place a `.env` file in the **directory where you run `ninetrix dev`** (typically the project root). Docker Compose reads it natively.
+
+```
+# .env (project root — same directory you run `ninetrix dev` from)
+
+# LLM provider keys
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+
+# MCP server credentials — forwarded to the mcp-worker container
+GITHUB_TOKEN=ghp_...
+SLACK_BOT_TOKEN=xoxb-...
+NOTION_API_KEY=secret_...
+LINEAR_API_KEY=lin_...
+
+# Telemetry (optional — connects agents to the local API)
+AGENTFILE_API_URL=http://localhost:8000
+AGENTFILE_RUNNER_TOKEN=<value from ~/.agentfile/.api-secret>
+```
+
+The docker-compose.dev.yml forwards all credential env vars to the mcp-worker container. The LLM keys are forwarded to agent containers by `ninetrix run` / `ninetrix up`.
+
+### Configuring MCP Servers (`~/.agentfile/mcp-worker.yaml`)
+
+This file is bind-mounted into the mcp-worker container (read-only). Edit it to enable MCP servers for the worker. After editing, run `ninetrix dev` again (or restart the worker container).
+
+```yaml
+# ~/.agentfile/mcp-worker.yaml
+gateway_url: "ws://mcp-gateway:8080"   # internal Docker network hostname
+workspace_id: "local"
+worker_name: "default"
+token: "local-dev-secret"              # matches MCP_GATEWAY_SECRET in compose
+
+servers:
+  - name: github
+    type: npx
+    package: "@modelcontextprotocol/server-github"
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"  # resolved from container env at startup
+
+  - name: filesystem
+    type: npx
+    package: "@modelcontextprotocol/server-filesystem"
+    args: ["/workspace"]
+```
+
+`${VAR}` syntax in `env:` values is resolved from the container's environment at worker startup. The container environment comes from the host env / `.env` file via docker-compose.
+
+### Verifying the Stack is Running
+
+```bash
+# Check all services are healthy
+ninetrix dev --detach    # start detached, no log streaming
+
+# Gateway health + connected worker count
+curl http://localhost:8080/health
+
+# See all registered MCP tools (should show github__* after config)
+curl http://localhost:8080/admin/tools
+
+# See connected workers
+curl http://localhost:8080/admin/workers
+```
+
+### Observability (Logs)
+
+```bash
+# Stream all service logs
+docker compose -f infra/compose/docker-compose.dev.yml logs -f
+
+# Just the mcp-worker (tool calls in/out)
+docker compose -f infra/compose/docker-compose.dev.yml logs mcp-worker -f
+
+# Just the mcp-gateway (routing, errors)
+docker compose -f infra/compose/docker-compose.dev.yml logs mcp-gateway -f
+```
+
+Key log lines to watch for:
+- `Worker connected: id=default workspace=local` — worker registered with gateway
+- `Started MCP server 'github' — 30 tool(s)` — GitHub MCP server started in worker
+- `Routing github__list_repos → worker=default` — tool call routed by gateway
+- Any `ERROR` lines indicate failures (missing env vars, npx not found, etc.)
+
+### Stop the Stack
+
+```bash
+ninetrix dev --detach    # start
+Ctrl+C                   # stop (when running with log streaming)
+
+# Manual stop
+docker compose -f infra/compose/docker-compose.dev.yml down
+```
+
+---
+
 ## Architecture Overview
 
 The CLI packages AI agents as Docker containers. The workflow is:
@@ -32,7 +153,7 @@ The CLI packages AI agents as Docker containers. The workflow is:
 Each command lives in `agentfile/commands/`:
 
 - `init.py` — scaffolds a new `agentfile.yaml` from `templates/agentfile.yaml.j2`
-- `build.py` — validates the config, resolves MCP tool specs from the registry, renders `Dockerfile.j2` + `entrypoint.py.j2` into a temp dir, then calls `docker build`
+- `build.py` — validates the config, renders `Dockerfile.j2` + `entrypoint.py.j2` into a temp dir, then calls `docker build`; MCP tool specs are no longer resolved at build time (gateway handles discovery at runtime)
 - `run.py` — runs the built image via `subprocess` with interactive TTY; always injects `AGENTFILE_PROVIDER`, `AGENTFILE_MODEL`, `AGENTFILE_TEMPERATURE` as env vars to override baked-in values; also forwards API keys, Composio keys, DB URL, and `AGENTFILE_THREAD_ID`
 - `deploy.py` — wraps build + `docker push` + prints the resulting `docker run` command
 - `mcp.py` — manages MCP tool servers: `list`, `add` (writes to `~/.agentfile/mcp.yaml`), `test` (connects via MCP SDK and prints tool schemas)
@@ -60,13 +181,13 @@ Sub-models:
 
 ### MCP Registry (`agentfile/core/mcp_registry.py`)
 
-Two-layer registry: built-in servers + user overrides in `~/.agentfile/mcp.yaml`. Tools declared as `source: mcp://brave-search` in `agentfile.yaml` are resolved here at build time into subprocess specs `(type, package, args, env_keys)`.
+Two-layer registry: built-in servers + user overrides in `~/.agentfile/mcp.yaml`. Used by the `ninetrix mcp list/add/test` CLI commands only. **Not used at build time** — the agent Docker no longer spawns local MCP servers.
 
 ### Templates (`agentfile/templates/`)
 
 All three templates are Jinja2 (`.j2`):
 
-- `Dockerfile.j2` — installs provider SDKs, MCP package, Composio SDK (provider-specific), and psycopg3; conditionally adds Node.js or `uv` based on MCP server types
+- `Dockerfile.j2` — installs provider SDKs, httpx (for MCP gateway), Composio SDK (provider-specific), and psycopg3. No Node.js or uv — MCP servers are never run inside the agent container.
 - `entrypoint.py.j2` — the generated agent runtime (see below)
 - `agentfile.yaml.j2` — initial scaffold template
 
@@ -85,13 +206,23 @@ The provider/model/temperature can always be overridden at runtime via environme
 Tools are declared in `agentfile.yaml` with a `source:` field:
 
 
-| Source prefix | Protocol                                           | Example             |
-| ------------- | -------------------------------------------------- | ------------------- |
-| `mcp://`      | MCP stdio subprocess (npx / uvx / docker / python) | `mcp://duckduckgo`  |
-| `composio://` | Composio cloud action registry                     | `composio://GITHUB` |
+| Source prefix | Protocol                                                    | Example             |
+| ------------- | ----------------------------------------------------------- | ------------------- |
+| `mcp://`      | MCP Gateway HTTP proxy — routed via mcp-gateway + mcp-worker | `mcp://duckduckgo`  |
+| `composio://` | Composio cloud action registry                              | `composio://GITHUB` |
 
 
-**MCP tools** are resolved at build time via `agentfile/core/mcp_registry.py`. The entrypoint starts each MCP server as a subprocess and communicates via stdio using the MCP SDK.
+**MCP tools** — the agent Docker never spawns MCP server subprocesses. All `mcp://` tools are proxied at runtime through the MCP gateway (`POST /v1/mcp/{workspace_id}`). The gateway routes each call to a connected mcp-worker, which runs the actual MCP server subprocess. Gateway connection is configured via `mcp_gateway:` in the yaml OR env vars at runtime:
+
+```yaml
+# in agentfile.yaml (optional — can use env vars instead)
+mcp_gateway:
+  url: "http://localhost:8080"       # or MCP_GATEWAY_URL env var
+  token: "${MCP_GATEWAY_TOKEN}"      # or MCP_GATEWAY_TOKEN env var
+  workspace_id: "default"            # or MCP_GATEWAY_WORKSPACE env var
+```
+
+If no `mcp_gateway:` section is present but the agent has `mcp://` tools, `use_mcp_gateway` is still set to `True` — the agent reads connection info purely from env vars at runtime.
 
 **Composio tools** use `client.tools.get_raw_composio_tools()` at runtime to fetch schemas, then `client.tools.execute(slug=..., arguments=..., user_id=..., dangerously_skip_version_check=True)` to invoke them. Tool schemas are formatted for the active provider at build time (Jinja2 conditional). Provider-specific Composio packages are installed in the Dockerfile:
 
@@ -220,26 +351,26 @@ triggers:
 ### Jinja2 Template Context Variables (passed from `build.py`)
 
 
-| Variable                   | Type        | Purpose                                   |
-| -------------------------- | ----------- | ----------------------------------------- |
-| `agent`                    | `AgentFile` | Full agent config object                  |
-| `needs_node`               | bool        | Install Node.js in Dockerfile             |
-| `needs_uv`                 | bool        | Install uv in Dockerfile                  |
-| `has_mcp_tools`            | bool        | Enable MCP async branch                   |
-| `mcp_tool_defs`            | list        | Resolved MCP server specs                 |
-| `has_composio_tools`       | bool        | Enable Composio integration               |
-| `composio_tool_defs`       | list        | `[{app, actions}]`                        |
-| `has_persistence`          | bool        | Enable StateStore / Checkpointer          |
-| `persistence_provider`     | str         | e.g. `"postgres"`                         |
-| `persistence_url_template` | str         | Raw URL with `${VAR}` placeholders        |
-| `has_planned_execution`    | bool        | Enable plan-then-execute mode             |
-| `verify_steps`             | bool        | Enable per-tool verification              |
-| `max_plan_steps`           | int         | Cap on number of plan steps               |
-| `on_step_failure`          | str         | `"abort"` | `"continue"` | `"retry_once"` |
-| `has_verifier`             | bool        | Initialize separate verifier LLM client   |
-| `verifier_provider`        | str         | Provider for verifier LLM                 |
-| `verifier_model`           | str         | Model for verifier LLM                    |
-| `verifier_max_tokens`      | int         | Max tokens for verifier response          |
+| Variable                   | Type        | Purpose                                        |
+| -------------------------- | ----------- | ---------------------------------------------- |
+| `agent`                    | `AgentFile` | Full agent config object                       |
+| `use_mcp_gateway`          | bool        | True if agent has any `mcp://` tools           |
+| `mcp_gateway_url`          | str         | Gateway base URL (baked in from yaml or empty) |
+| `mcp_gateway_token`        | str         | Bearer token (baked in from yaml or empty)     |
+| `mcp_gateway_workspace`    | str         | Workspace ID (default: `"default"`)            |
+| `has_composio_tools`       | bool        | Enable Composio integration                    |
+| `composio_tool_defs`       | list        | `[{app, actions}]`                             |
+| `has_persistence`          | bool        | Enable StateStore / Checkpointer               |
+| `persistence_provider`     | str         | e.g. `"postgres"`                              |
+| `persistence_url_template` | str         | Raw URL with `${VAR}` placeholders             |
+| `has_planned_execution`    | bool        | Enable plan-then-execute mode                  |
+| `verify_steps`             | bool        | Enable per-tool verification                   |
+| `max_plan_steps`           | int         | Cap on number of plan steps                    |
+| `on_step_failure`          | str         | `"abort"` \| `"continue"` \| `"retry_once"`   |
+| `has_verifier`             | bool        | Initialize separate verifier LLM client        |
+| `verifier_provider`        | str         | Provider for verifier LLM                      |
+| `verifier_model`           | str         | Model for verifier LLM                         |
+| `verifier_max_tokens`      | int         | Max tokens for verifier response               |
 
 
 ### Human-in-the-Loop (HITL)

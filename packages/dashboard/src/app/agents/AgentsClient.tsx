@@ -185,7 +185,7 @@ function TopNav({
           }}
         >
           <img
-            src="/public/ninetrix-logo.png"
+            src="/dashboard/ninetrix-logo.png"
             alt="Ninetrix"
             width={26}
             height={26}

@@ -114,9 +114,21 @@ def invoke_cmd(
             resp = requests.post(
                 f"{url}/invoke",
                 json=payload,
-                timeout=min(timeout, 10),  # short connect timeout during retry loop
+                # Use a short connect timeout during the retry loop so we detect
+                # "not ready yet" quickly, but a long read timeout once connected
+                # because LLM calls can take 30-120 s.
+                timeout=(10, timeout),
             )
-            resp.raise_for_status()
+            if not resp.ok:
+                # Try to extract the real error message from the JSON body before
+                # raise_for_status() discards it.
+                try:
+                    body = resp.json()
+                    agent_error = body.get("error") or body.get("detail") or resp.text
+                except Exception:
+                    agent_error = resp.text
+                console.print(f"  [red]✗[/red] Agent returned {resp.status_code}: {agent_error}")
+                raise SystemExit(1)
             data = resp.json()
             break  # success
 
@@ -139,9 +151,8 @@ def invoke_cmd(
         except requests.exceptions.Timeout:
             console.print(f"  [red]✗[/red] Request timed out after {timeout}s.")
             raise SystemExit(1)
-        except requests.exceptions.HTTPError as exc:
-            console.print(f"  [red]✗[/red] HTTP error: {exc}")
-            raise SystemExit(1)
+        except SystemExit:
+            raise
         except Exception as exc:
             console.print(f"  [red]✗[/red] {exc}")
             raise SystemExit(1)
