@@ -1,0 +1,33 @@
+# Self-hosted example — uses local PostgreSQL for persistence
+# and points to the local MCP gateway.
+#
+# Prerequisites:
+#   docker compose -f docker-compose.yml up -d   (starts postgres + gateway)
+#
+# Then:
+#   ninetrix build
+#   ninetrix run --thread-id my-session
+
+agents:
+  assistant:
+    metadata:
+      name: assistant
+      role: Persistent research assistant
+      goal: Help the user with research tasks, remembering context across sessions
+      instructions: |
+        You are a persistent assistant. You remember everything from previous
+        conversations with this user. Pick up exactly where you left off.
+        Use web search to look up current information when needed.
+
+    runtime:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      temperature: 0.3
+
+    tools:
+      - name: web_search
+        source: mcp://brave-search
+
+persistence:
+  provider: postgres
+  url: "${DATABASE_URL}"

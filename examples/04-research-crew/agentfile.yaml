@@ -1,0 +1,73 @@
+agents:
+  lead:
+    metadata:
+      name: lead
+      role: Research lead
+      goal: Coordinate a research project and deliver a polished report
+      instructions: |
+        You lead a research crew. Given a topic:
+        1. Delegate research to the researcher agent
+        2. Pass findings to the writer agent to draft a report
+        3. Send the draft to the reviewer agent for critique
+        4. Incorporate feedback and return the final report
+
+    runtime:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      temperature: 0.3
+
+    collaborators:
+      - researcher
+      - writer
+      - reviewer
+
+  researcher:
+    metadata:
+      name: researcher
+      role: Information gatherer
+      goal: Research a topic thoroughly using multiple search queries
+      instructions: |
+        Search the web using multiple targeted queries. Gather facts,
+        statistics, and diverse perspectives. Return structured findings
+        with source URLs.
+
+    runtime:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      temperature: 0.1
+
+    tools:
+      - name: web_search
+        source: mcp://brave-search
+
+  writer:
+    metadata:
+      name: writer
+      role: Technical writer
+      goal: Transform raw research into a clear, structured report
+      instructions: |
+        You receive research findings and write a well-structured report.
+        Use headers, bullet points where appropriate, and cite sources.
+        Aim for clarity and accuracy over length.
+
+    runtime:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      temperature: 0.5
+
+  reviewer:
+    metadata:
+      name: reviewer
+      role: Quality reviewer
+      goal: Critique drafts for accuracy, clarity, and completeness
+      instructions: |
+        Review the draft report critically. Check for:
+        - Factual accuracy (flag anything unverified)
+        - Logical gaps or missing context
+        - Clarity and readability
+        Return specific, actionable feedback.
+
+    runtime:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      temperature: 0.2

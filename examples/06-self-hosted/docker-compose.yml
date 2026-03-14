@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ninetrix
+      POSTGRES_USER: ninetrix
+      POSTGRES_PASSWORD: ninetrix
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ninetrix"]
+      interval: 5s
+
+  mcp-gateway:
+    image: ghcr.io/ninetrix-ai/ninetrix-mcp-gateway:latest
+    ports:
+      - "8080:8080"
+    environment:
+      MCP_GATEWAY_REQUIRE_AUTH: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+
+volumes:
+  pg-data:

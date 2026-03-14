@@ -1,0 +1,61 @@
+# MCP Worker Configuration
+# Copy to mcp-worker.yaml and fill in your values.
+# All fields can also be overridden with environment variables.
+
+# Gateway connection
+gateway_url: "ws://localhost:8080"   # env: MCP_GATEWAY_URL
+workspace_id: "default"              # env: MCP_WORKSPACE_ID
+worker_name: "my-worker"             # env: MCP_WORKER_NAME
+worker_id: "my-worker"               # env: MCP_WORKER_ID  (defaults to worker_name)
+token: "dev-secret"                  # env: MCP_GATEWAY_TOKEN
+
+# MCP servers this worker will run
+servers:
+
+  # ── Filesystem (ships with the MCP SDK, great for local file access) ──────
+  - name: filesystem
+    type: npx
+    package: "@modelcontextprotocol/server-filesystem"
+    args: ["/data"]   # directories to expose
+
+  # ── GitHub ────────────────────────────────────────────────────────────────
+  - name: github
+    type: npx
+    package: "@modelcontextprotocol/server-github"
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+
+  # ── Slack ─────────────────────────────────────────────────────────────────
+  # - name: slack
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-slack"
+  #   env:
+  #     SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+  #     SLACK_TEAM_ID: "${SLACK_TEAM_ID}"
+
+  # ── Notion ────────────────────────────────────────────────────────────────
+  # - name: notion
+  #   type: npx
+  #   package: "@notionhq/notion-mcp-server"
+  #   env:
+  #     NOTION_API_KEY: "${NOTION_API_KEY}"
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  # - name: postgres
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-postgres"
+  #   env:
+  #     POSTGRES_CONNECTION_STRING: "${DATABASE_URL}"
+
+  # ── Web search (Brave) ────────────────────────────────────────────────────
+  # - name: brave-search
+  #   type: npx
+  #   package: "@modelcontextprotocol/server-brave-search"
+  #   env:
+  #     BRAVE_API_KEY: "${BRAVE_API_KEY}"
+
+  # ── Custom / internal server (full command override) ─────────────────────
+  # - name: internal-api
+  #   command: "python /opt/internal/my_mcp_server.py"
+  #   env:
+  #     INTERNAL_API_KEY: "${INTERNAL_API_KEY}"

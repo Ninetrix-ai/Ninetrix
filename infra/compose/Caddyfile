@@ -1,0 +1,5 @@
+{$DOMAIN} {
+    reverse_proxy /dashboard* api:8000
+    reverse_proxy /v1* api:8000
+    reverse_proxy /health api:8000
+}

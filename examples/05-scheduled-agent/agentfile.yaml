@@ -1,0 +1,28 @@
+# This agent runs on a schedule — no user interaction needed.
+# Deploy with: ninetrix up
+# The agent fires at 09:00 every weekday and sends a summary email.
+
+agents:
+  daily-briefing:
+    metadata:
+      name: daily-briefing
+      role: Daily news briefer
+      goal: Compile a morning briefing from the latest news
+      instructions: |
+        Every morning, search for the top technology and AI news from the past 24 hours.
+        Write a concise briefing (5–7 bullet points) covering the most important stories.
+        Focus on developments that affect software engineers and product teams.
+
+    runtime:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      temperature: 0.3
+
+    tools:
+      - name: web_search
+        source: mcp://brave-search
+
+    triggers:
+      - type: schedule
+        cron: "0 9 * * 1-5"   # 09:00 Mon–Fri
+        message: "Compile the morning tech briefing for today."

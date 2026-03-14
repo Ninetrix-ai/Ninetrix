@@ -1,0 +1,28 @@
+# This example requires the MCP gateway to be running.
+# Start it with: ninetrix dev
+#
+# Then enable the filesystem server in ~/.agentfile/mcp-worker.yaml:
+#   - name: filesystem
+#     type: npx
+#     package: "@modelcontextprotocol/server-filesystem"
+#     args: ["${HOME}/Documents"]
+
+agents:
+  file-agent:
+    metadata:
+      name: file-agent
+      role: File assistant
+      goal: Help the user read, search, and summarise files on their system
+      instructions: |
+        You have access to the user's filesystem via MCP tools.
+        Always confirm the path before reading large files.
+        Summarise content clearly and highlight key points.
+
+    runtime:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      temperature: 0.2
+
+    tools:
+      - name: filesystem
+        source: mcp://filesystem

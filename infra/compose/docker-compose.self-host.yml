@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ninetrix}
+      POSTGRES_USER: ${POSTGRES_USER:-ninetrix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ninetrix-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ninetrix}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ghcr.io/ninetrix-ai/ninetrix-api:latest
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ninetrix}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ninetrix}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mcp-gateway:
+    image: ghcr.io/ninetrix-ai/ninetrix-mcp-gateway:latest
+    environment:
+      MCP_GATEWAY_SECRET: ${MCP_GATEWAY_SECRET:?MCP_GATEWAY_SECRET is required}
+      MCP_GATEWAY_REQUIRE_AUTH: "${MCP_GATEWAY_REQUIRE_AUTH:-true}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mcp-worker:
+    image: ghcr.io/ninetrix-ai/ninetrix-mcp-worker:latest
+    environment:
+      MCP_GATEWAY_URL: ws://mcp-gateway:8080
+      MCP_WORKSPACE_ID: ${MCP_WORKSPACE_ID:-default}
+      MCP_WORKER_NAME: ${MCP_WORKER_NAME:-default}
+      MCP_GATEWAY_SECRET: ${MCP_GATEWAY_SECRET}
+    volumes:
+      - ./mcp-worker.yaml:/app/mcp-worker.yaml:ro
+    depends_on:
+      mcp-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  ninetrix-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-cli:
+    name: Lint CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check packages/cli/agentfile/
+
+  validate-schema:
+    name: Validate JSON Schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema
+      - name: Validate schema is well-formed
+        run: python -c "import json, jsonschema; s=json.load(open('schema/v1/agentfile.schema.json')); jsonschema.Draft7Validator.check_schema(s); print('Schema OK')"
+      - name: Validate examples against schema
+        run: |
+          pip install pyyaml jsonschema
+          python -c "
+          import yaml, json, jsonschema, pathlib
+          schema = json.load(open('schema/v1/agentfile.schema.json'))
+          for f in pathlib.Path('examples').rglob('agentfile.yaml'):
+              doc = yaml.safe_load(f.read_text())
+              jsonschema.validate(doc, schema)
+              print(f'  OK: {f}')
+          "
+
+  build-dashboard:
+    name: Build Dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+      - run: pnpm install
+      - run: pnpm turbo run build --filter=dashboard

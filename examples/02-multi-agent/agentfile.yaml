@@ -1,0 +1,37 @@
+agents:
+  orchestrator:
+    metadata:
+      name: orchestrator
+      role: Task coordinator
+      goal: Break down the user's request and delegate to the right specialist
+      instructions: |
+        You coordinate tasks by delegating to specialist agents.
+        Use transfer_to_agent to hand off tasks to the researcher when
+        you need information gathered from the web.
+        Synthesize the results and return a final answer to the user.
+
+    runtime:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      temperature: 0.3
+
+    collaborators:
+      - researcher
+
+  researcher:
+    metadata:
+      name: researcher
+      role: Web researcher
+      goal: Find accurate, up-to-date information using web search
+      instructions: |
+        You are a precise web researcher. Search for relevant information,
+        cite your sources, and return structured findings.
+
+    runtime:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      temperature: 0.1
+
+    tools:
+      - name: web_search
+        source: mcp://brave-search

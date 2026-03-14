@@ -1,0 +1,9 @@
+# Global fallback
+*                          @Ninetrix-ai/core
+
+# Schema changes require extra review
+schema/                    @Ninetrix-ai/core
+packages/cli/agentfile/core/schema.json  @Ninetrix-ai/core
+
+# CI changes
+.github/workflows/         @Ninetrix-ai/core

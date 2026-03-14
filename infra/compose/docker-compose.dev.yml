@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ninetrix
+      POSTGRES_USER: ninetrix
+      POSTGRES_PASSWORD: ninetrix
+    ports:
+      - "5432:5432"
+    volumes:
+      - ninetrix-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ninetrix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ghcr.io/ninetrix-ai/ninetrix-api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://ninetrix:ninetrix@postgres:5432/ninetrix
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  mcp-gateway:
+    image: ghcr.io/ninetrix-ai/ninetrix-mcp-gateway:latest
+    ports:
+      - "8080:8080"
+    environment:
+      MCP_GATEWAY_SECRET: local-dev-secret
+      MCP_GATEWAY_REQUIRE_AUTH: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  mcp-worker:
+    image: ghcr.io/ninetrix-ai/ninetrix-mcp-worker:latest
+    environment:
+      MCP_GATEWAY_URL: ws://mcp-gateway:8080
+      MCP_WORKSPACE_ID: local
+      MCP_WORKER_NAME: default
+    volumes:
+      - ${HOME}/.agentfile/mcp-worker.yaml:/app/mcp-worker.yaml:ro
+    depends_on:
+      mcp-gateway:
+        condition: service_healthy
+
+volumes:
+  ninetrix-data:
