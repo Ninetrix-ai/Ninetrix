@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { listAgents, checkApiStatus, type AgentStats, type ApiStatus } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
+import StatusBadge, { normalizeStatus } from "@/components/StatusBadge";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,14 +24,6 @@ function formatRelTime(iso: string): string {
   if (d.getFullYear() === now.getFullYear())
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-
-function normalizeStatus(s: string): "running" | "completed" | "error" | "pending" | "idle" {
-  if (s === "in_progress" || s === "started" || s === "running") return "running";
-  if (s === "completed" || s === "approved") return "completed";
-  if (s === "error" || s === "failed") return "error";
-  if (s === "waiting_for_approval" || s === "pending") return "pending";
-  return "idle";
 }
 
 function shortModel(model: string): string {
@@ -67,49 +60,6 @@ function agentInitials(id: string): string {
   const parts = id.replace(/[-_]/g, " ").trim().split(/\s+/);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return id.slice(0, 2).toUpperCase();
-}
-
-// ─── Status Badge ─────────────────────────────────────────────────────────────
-
-const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; label: string }> = {
-  running:   { bg: "rgba(16,185,129,0.1)",   text: "#10B981", dot: "#10B981", label: "Running"   },
-  completed: { bg: "rgba(100,116,139,0.1)",  text: "#94A3B8", dot: "#64748B", label: "Completed" },
-  error:     { bg: "rgba(239,68,68,0.1)",    text: "#EF4444", dot: "#EF4444", label: "Failed"    },
-  pending:   { bg: "rgba(245,158,11,0.1)",   text: "#F59E0B", dot: "#F59E0B", label: "Pending"   },
-  idle:      { bg: "rgba(100,116,139,0.08)", text: "#64748B", dot: "#475569", label: "Idle"      },
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_STYLES[normalizeStatus(status)] ?? STATUS_STYLES.idle;
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "2px 8px",
-        borderRadius: 4,
-        background: s.bg,
-        color: s.text,
-        fontSize: 11,
-        fontWeight: 500,
-        letterSpacing: "0.02em",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span
-        style={{
-          width: 5,
-          height: 5,
-          borderRadius: "50%",
-          background: s.dot,
-          flexShrink: 0,
-          animation: normalizeStatus(status) === "running" ? "pulse-ring 1.6s ease-in-out infinite" : "none",
-        }}
-      />
-      {s.label}
-    </span>
-  );
 }
 
 // ─── Success Rate ─────────────────────────────────────────────────────────────
