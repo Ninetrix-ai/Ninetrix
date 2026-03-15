@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { timelineEventsToTraceNodes, calcTotalMs, type TraceNode } from "@/lib/trace";
 import ThemeToggle from "@/components/ThemeToggle";
+import StatusBadge, { normalizeStatus } from "@/components/StatusBadge";
 
 // ─── JSON theme ──────────────────────────────────────────────────────────────
 
@@ -61,14 +62,6 @@ function formatTimestamp(iso: string): string {
   } as Intl.DateTimeFormatOptions);
 }
 
-function normalizeStatus(s: string): "running" | "completed" | "error" | "pending" | "cancelled" {
-  if (s === "in_progress" || s === "started" || s === "running") return "running";
-  if (s === "completed" || s === "approved") return "completed";
-  if (s === "error" || s === "failed") return "error";
-  if (s === "waiting_for_approval" || s === "pending") return "pending";
-  return "cancelled";
-}
-
 function shortModel(model: string): string {
   const map: Record<string, string> = {
     "claude-opus": "Opus", "claude-sonnet": "Sonnet", "claude-haiku": "Haiku",
@@ -106,39 +99,9 @@ const NODE_CONFIG = {
   handoff: { color: "#8B5CF6", dimColor: "rgba(139,92,246,0.12)", icon: "◀▶", label: "Handoff" },
 };
 
-const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; label: string }> = {
-  running: { bg: "rgba(16,185,129,0.1)", text: "#10B981", dot: "#10B981", label: "Running" },
-  completed: { bg: "rgba(100,116,139,0.1)", text: "#94A3B8", dot: "#64748B", label: "Completed" },
-  error: { bg: "rgba(239,68,68,0.1)", text: "#EF4444", dot: "#EF4444", label: "Failed" },
-  pending: { bg: "rgba(245,158,11,0.1)", text: "#F59E0B", dot: "#F59E0B", label: "Pending" },
-  cancelled: { bg: "rgba(100,116,139,0.08)", text: "#64748B", dot: "#475569", label: "Cancelled" },
-};
-
 const TRIGGER_ICONS: Record<string, string> = {
   webhook: "⚡", schedule: "⏱", api: "⬡", manual: "▶", github: "◆",
 };
-
-// ─── StatusBadge ─────────────────────────────────────────────────────────────
-
-function StatusBadge({ status, size = "sm" }: { status: string; size?: "sm" | "md" }) {
-  const s = STATUS_STYLES[normalizeStatus(status)] ?? STATUS_STYLES.cancelled;
-  const isRunning = normalizeStatus(status) === "running";
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: size === "md" ? 6 : 5,
-      padding: size === "md" ? "3px 10px" : "2px 8px",
-      borderRadius: 4, background: s.bg, color: s.text,
-      fontSize: size === "md" ? 12 : 11, fontWeight: 500, letterSpacing: "0.02em",
-    }}>
-      <span style={{
-        width: size === "md" ? 6 : 5, height: size === "md" ? 6 : 5,
-        borderRadius: "50%", background: s.dot, flexShrink: 0,
-        animation: isRunning ? "pulse-ring 1.6s ease-in-out infinite" : "none",
-      }} />
-      {s.label}
-    </span>
-  );
-}
 
 // ─── TriggerChip ─────────────────────────────────────────────────────────────
 
@@ -1218,32 +1181,19 @@ export default function ObservabilityClient() {
 
         {/* ── Thread header ── */}
         <div style={{
-          padding: "20px 24px 0",
+          padding: "16px 24px 0",
           borderBottom: "1px solid var(--border)",
           background: "var(--bg-surface)",
         }}>
-          {/* Top row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-            <code style={{
-              fontSize: 12, fontFamily: "var(--font-jb-mono, monospace)",
-              color: "var(--text-secondary)", background: "var(--border)",
-              padding: "3px 10px", borderRadius: 5, border: "1px solid var(--border-strong)",
-            }}>
-              {thread.thread_id}
-            </code>
+          {/* Top row: agent flow + status + trigger */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            {agents.length > 0 && <AgentFlow agents={agents} />}
             <StatusBadge status={thread.status} size="md" />
             {thread.trigger && <TriggerChip trigger={thread.trigger} />}
           </div>
 
-          {/* Agent flow */}
-          {agents.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <AgentFlow agents={agents} />
-            </div>
-          )}
-
           {/* Stat line */}
-          <div style={{ paddingBottom: 18 }}>
+          <div style={{ paddingBottom: 16 }}>
             <StatLine items={[
               { label: "Duration", value: elapsedDisplay, accent: isRunning ? "#10B981" : undefined },
               { label: "Tokens", value: formatTokens(thread.tokens_used) },

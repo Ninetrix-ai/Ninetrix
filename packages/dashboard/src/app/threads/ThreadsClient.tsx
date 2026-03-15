@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { timelineEventsToTraceNodes, calcTotalMs, type TraceNode } from "@/lib/trace";
 import ThemeToggle from "@/components/ThemeToggle";
+import StatusBadge, { normalizeStatus } from "@/components/StatusBadge";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -58,14 +59,6 @@ function truncId(id: string, len = 8): string {
   return id.length > len ? id.slice(0, len) : id;
 }
 
-function normalizeStatus(s: string): "running" | "completed" | "error" | "pending" | "cancelled" {
-  if (s === "in_progress" || s === "started" || s === "running") return "running";
-  if (s === "completed" || s === "approved") return "completed";
-  if (s === "error" || s === "failed") return "error";
-  if (s === "waiting_for_approval" || s === "pending") return "pending";
-  return "cancelled";
-}
-
 const MODEL_SHORT: Record<string, string> = {
   "claude-opus": "Opus",
   "claude-sonnet": "Sonnet",
@@ -80,48 +73,6 @@ function shortModel(model: string): string {
     if (model.toLowerCase().includes(key)) return val;
   }
   return model.split("-").slice(-1)[0] || model;
-}
-
-// ─── Status Badge ────────────────────────────────────────────────────────────
-
-const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; label: string }> = {
-  running: { bg: "rgba(16,185,129,0.1)", text: "#10B981", dot: "#10B981", label: "Running" },
-  completed: { bg: "rgba(100,116,139,0.1)", text: "#94A3B8", dot: "#64748B", label: "Completed" },
-  error: { bg: "rgba(239,68,68,0.1)", text: "#EF4444", dot: "#EF4444", label: "Failed" },
-  pending: { bg: "rgba(245,158,11,0.1)", text: "#F59E0B", dot: "#F59E0B", label: "Pending" },
-  cancelled: { bg: "rgba(100,116,139,0.08)", text: "#64748B", dot: "#475569", label: "Cancelled" },
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_STYLES[normalizeStatus(status)] ?? STATUS_STYLES.cancelled;
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "2px 8px",
-        borderRadius: 4,
-        background: s.bg,
-        color: s.text,
-        fontSize: 11,
-        fontWeight: 500,
-        letterSpacing: "0.02em",
-      }}
-    >
-      <span
-        style={{
-          width: 5,
-          height: 5,
-          borderRadius: "50%",
-          background: s.dot,
-          flexShrink: 0,
-          animation: normalizeStatus(status) === "running" ? "pulse-ring 1.6s ease-in-out infinite" : "none",
-        }}
-      />
-      {s.label}
-    </span>
-  );
 }
 
 // ─── Trigger chip ────────────────────────────────────────────────────────────
