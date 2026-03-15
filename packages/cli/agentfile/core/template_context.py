@@ -31,10 +31,6 @@ if _PYDANTIC_AVAILABLE:
         mcp_tool_defs: list = []
         has_composio_tools: bool = False
         composio_tool_defs: list = []
-        has_persistence: bool = False
-        persistence_provider: str = ""
-        persistence_url_template: str = ""
-        approval_notify_url: str = ""
         has_planned_execution: bool = False
         verify_steps: bool = False
         max_plan_steps: int = 10
@@ -96,13 +92,11 @@ def build_context(
         _warn:            Optional callable for MCP registry warnings.
     """
     eff_governance  = af.effective_governance(agent_def)
-    eff_persistence = af.effective_persistence(agent_def)
     eff_triggers    = af.effective_triggers(agent_def)
 
     agent = dataclasses.replace(
         agent_def,
         governance=eff_governance,
-        persistence=eff_persistence,
         triggers=eff_triggers,
     )
 
@@ -214,10 +208,6 @@ def build_context(
         "mcp_tool_defs":              mcp_tool_defs,
         "has_composio_tools":         has_composio_tools,
         "composio_tool_defs":         composio_tool_defs,
-        "has_persistence":            eff_persistence is not None,
-        "persistence_provider":       eff_persistence.provider if eff_persistence else "",
-        "persistence_url_template":   eff_persistence.url if eff_persistence else "",
-        "approval_notify_url":        eff_governance.human_approval.notify_url,
         "has_planned_execution":      exec_obj.mode == "planned",
         "verify_steps":               exec_obj.verify_steps,
         "max_plan_steps":             exec_obj.max_steps,

@@ -59,12 +59,15 @@ def run_container(
     memory: str | None = None,
     warm_pool: bool = False,
     volumes: list["VolumeSpec"] | None = None,
+    restart_policy: str | None = None,
 ) -> None:
     """Run an agent container, optionally with TTY, port bindings, and resource limits."""
     env = env or {}
 
+    # --restart and --rm are mutually exclusive in Docker
+    no_rm = warm_pool or bool(restart_policy)
     # Build the equivalent manual command and print it so the user can reuse it
-    rm_flag = "" if warm_pool else "--rm "
+    rm_flag = "" if no_rm else "--rm "
     tty_flag = "-it " if interactive else ""
     port_flags = " ".join(f"-p {p}" for p in (port_bindings or []))
     port_display = f" {port_flags}" if port_flags else ""
@@ -78,8 +81,10 @@ def run_container(
     # --add-host ensures host.docker.internal resolves to the host on Linux too
     # (macOS Docker Desktop provides it automatically; this is a no-op there).
     cmd = ["docker", "run"]
-    if not warm_pool:
+    if not no_rm:
         cmd.append("--rm")
+    if restart_policy:
+        cmd += ["--restart", restart_policy]
     if interactive:
         cmd += ["-it"]
     cmd.append("--add-host=host.docker.internal:host-gateway")

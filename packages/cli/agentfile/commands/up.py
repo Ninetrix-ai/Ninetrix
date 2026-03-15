@@ -6,6 +6,7 @@ import json
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -127,15 +128,6 @@ def _build_agent_env(
             if val:
                 env[cvar] = val
 
-    eff_pers = af.effective_persistence(agent_def)
-    if eff_pers:
-        m = re.search(r'\$\{([^}]+)\}', eff_pers.url)
-        if m:
-            var_name = m.group(1)
-            val = os.environ.get(var_name) or _load_dotenv_key(var_name) or ""
-            if val:
-                env[var_name] = val
-
     # Forward SaaS credentials so agents can phone home with thread events.
     # Machine secret always wins when local API is running — env/.env often holds a
     # stale SaaS token that the local API won't accept.
@@ -217,6 +209,17 @@ def _docker_client() -> docker.DockerClient:
         raise SystemExit(1)
 
 
+def _load_pool_state(swarm: str) -> dict:
+    """Return saved pool state or empty dict."""
+    sf = _state_file(swarm)
+    if sf.exists():
+        try:
+            return json.loads(sf.read_text())
+        except Exception:
+            pass
+    return {}
+
+
 @click.command("up")
 @click.option("--file", "-f", "agentfile_path", default="agentfile.yaml",
               show_default=True, help="Path to agentfile.yaml")
@@ -252,6 +255,9 @@ def up_cmd(agentfile_path: str, tag: str, detach: bool) -> None:
     swarm = _swarm_name(af)
     agent_names = list(af.agents.keys())
 
+    # Load prior pool state to recover persisted thread IDs (for crash-safe resume)
+    prior_state = _load_pool_state(swarm)
+
     # Compute host port assignments: entry agent gets INVOKE_PORT, others get +1, +2, …
     host_ports = {name: INVOKE_PORT + i for i, name in enumerate(agent_names)}
 
@@ -282,6 +288,17 @@ def up_cmd(agentfile_path: str, tag: str, detach: bool) -> None:
         # Inject integration hub credentials (don't overwrite already-set vars)
         for k, v in integration_creds.items():
             env.setdefault(k, v)
+
+        # Durability: assign a stable thread ID so this agent always resumes from
+        # its last checkpoint after a crash or restart. Re-use prior ID if one exists.
+        eff_exec  = af.effective_execution(agent_def)
+        use_durability = eff_exec.durability
+        if use_durability:
+            prior_thread_id = (
+                prior_state.get("agents", {}).get(name, {}).get("thread_id")
+            )
+            thread_id = prior_thread_id or uuid.uuid4().hex
+            env["AGENTFILE_THREAD_ID"] = thread_id
 
         # Remove any existing container with this name
         try:
@@ -315,6 +332,8 @@ def up_cmd(agentfile_path: str, tag: str, detach: bool) -> None:
             detach=True,
             remove=False,
         )
+        if use_durability:
+            run_kwargs["restart_policy"] = {"Name": "on-failure", "MaximumRetryCount": 3}
         if nano_cpus is not None:
             run_kwargs["nano_cpus"] = nano_cpus
         if mem_limit is not None:
@@ -333,7 +352,7 @@ def up_cmd(agentfile_path: str, tag: str, detach: bool) -> None:
         except DockerException as exc:
             console.print(f"  [red]Failed to start '{name}':[/red] {exc}")
 
-    # 3. Save pool state (include resource limits for rollback/restart)
+    # 3. Save pool state (include resource limits + thread IDs for crash-safe resume)
     _STATE_DIR.mkdir(parents=True, exist_ok=True)
     agents_state: dict[str, Any] = {}
     for name, cid in container_ids.items():
@@ -347,6 +366,11 @@ def up_cmd(agentfile_path: str, tag: str, detach: bool) -> None:
             entry["nano_cpus"] = int(res.cpu * 1e9)
         if res.memory:
             entry["mem_limit"] = _parse_memory(res.memory)
+        # Persist thread ID so agents resume from the same checkpoint after restart
+        prior_tid = prior_state.get("agents", {}).get(name, {}).get("thread_id")
+        eff_exec_state = af.effective_execution(af.agents[name])
+        if eff_exec_state.durability:
+            entry["thread_id"] = prior_tid or uuid.uuid4().hex
         agents_state[name] = entry
 
     state = {

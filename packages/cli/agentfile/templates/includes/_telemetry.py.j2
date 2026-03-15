@@ -36,16 +36,19 @@ class _SaaSCheckpointer:
     """Posts checkpoint snapshots to the runner events API at each turn boundary."""
 
     __slots__ = ("thread_id", "trace_id", "parent_trace_id", "step_index",
-                 "tokens_used", "history_meta")
+                 "tokens_used", "history_meta", "turn_start_history_len",
+                 "pending_tool_calls")
 
     def __init__(self, thread_id: str, trace_id: str,
                  parent_trace_id: str | None = None) -> None:
-        self.thread_id       = thread_id
-        self.trace_id        = trace_id
-        self.parent_trace_id = parent_trace_id
-        self.step_index      = 0
-        self.tokens_used     = 0
-        self.history_meta: list = []
+        self.thread_id              = thread_id
+        self.trace_id               = trace_id
+        self.parent_trace_id        = parent_trace_id
+        self.step_index             = 0
+        self.tokens_used            = 0
+        self.history_meta: list     = []
+        self.turn_start_history_len = 0
+        self.pending_tool_calls: list = []
 
     def record(self, role: str, in_tok: int = 0, out_tok: int = 0,
                duration_ms: int | None = None) -> None:
@@ -81,17 +84,84 @@ class _SaaSCheckpointer:
             else:
                 self.history_meta.append({"ts": _ts_now})
         _post_runner_event("checkpoint", {
-            "thread_id":       self.thread_id,
-            "trace_id":        self.trace_id,
-            "parent_trace_id": self.parent_trace_id,
-            "agent_id":        AGENT_ID,
-            "step_index":      self.step_index,
-            "status":          status,
-            "history":         history,
-            "history_meta":    self.history_meta,
-            "tokens_used":     self.tokens_used,
-            "input_tokens":    in_tok,
-            "output_tokens":   out_tok,
-            "model":           LITELLM_MODEL,
+            "thread_id":              self.thread_id,
+            "trace_id":               self.trace_id,
+            "parent_trace_id":        self.parent_trace_id,
+            "agent_id":               AGENT_ID,
+            "step_index":             self.step_index,
+            "status":                 status,
+            "history":                history,
+            "history_meta":           self.history_meta,
+            "tokens_used":            self.tokens_used,
+            "input_tokens":           in_tok,
+            "output_tokens":          out_tok,
+            "model":                  LITELLM_MODEL,
+            "turn_start_history_len": self.turn_start_history_len,
+            "pending_tool_calls":     self.pending_tool_calls,
         })
         self.step_index += 1
+
+    async def load_prior(self) -> dict | None:
+        """Fetch the latest checkpoint for this thread from the API.
+
+        Returns the checkpoint dict on success, or None if no prior checkpoint
+        exists or the API is unreachable.
+        """
+        if not _SAAS_PERSIST or not self.thread_id:
+            return None
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=5) as _c:
+                _resp = await _c.get(
+                    f"{_API_URL}/v1/runners/threads/{self.thread_id}/latest",
+                    headers={"Authorization": f"Bearer {_RUNNER_TOKEN}"},
+                )
+            if _resp.status_code == 200:
+                return _resp.json()
+            if _resp.status_code == 404:
+                return None
+            print(f"[resume] API returned {_resp.status_code} — starting fresh", file=sys.stderr)
+        except Exception as _exc:
+            print(f"[resume] Could not fetch prior checkpoint: {_exc}", file=sys.stderr)
+        return None
+
+    async def poll_approval(self, step_index: int) -> str:
+        """Poll the API until this step is approved, rejected, or times out.
+
+        Returns "approved", "rejected", or "" (timed out).
+        """
+        elapsed = 0
+        while elapsed < APPROVAL_TIMEOUT:
+            await asyncio.sleep(APPROVAL_POLL_INTERVAL)
+            elapsed += APPROVAL_POLL_INTERVAL
+            _prior = await self.load_prior()
+            if _prior:
+                _status = _prior.get("status", "")
+                if _status == "approved":
+                    return "approved"
+                if _status == "rejected":
+                    return "rejected"
+        return ""
+
+    async def wait_for_approval(self, tool_name: str, tool_args: dict) -> bool:
+        """Post waiting_for_approval checkpoint, then poll until resolved."""
+        self.pending_tool_calls = [{"function": tool_name, "args": tool_args}]
+        self.step([], "waiting_for_approval")
+        current_step = self.step_index - 1
+
+        _console.print(f"\n[bold yellow]⏸ Approval required:[/bold yellow] [bold cyan]{tool_name}[/bold cyan]")
+        _console.print(f"  [dim]trace_id={self.trace_id}  step={current_step}[/dim]")
+        _console.print("  [dim]Waiting for decision (approve/reject via API or dashboard)…[/dim]\n")
+
+        _decision = await self.poll_approval(current_step)
+        if _decision == "approved":
+            _console.print("[bold green]✓ Approved.[/bold green] Continuing…\n")
+            self.pending_tool_calls = []
+            return True
+        if _decision == "rejected":
+            _console.print("[bold red]✗ Rejected.[/bold red] Skipping tool call.\n")
+            self.pending_tool_calls = []
+            return False
+        _console.print(f"[bold red]⏱ Approval timed out[/bold red] after {APPROVAL_TIMEOUT}s. Skipping.\n")
+        self.pending_tool_calls = []
+        return False

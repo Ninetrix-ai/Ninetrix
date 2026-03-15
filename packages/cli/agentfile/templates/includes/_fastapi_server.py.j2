@@ -64,27 +64,6 @@ async def _invoke_handler(request: Request) -> JSONResponse:
         "model":            LITELLM_MODEL,
     })
 
-{% if has_persistence %}
-    # Create a per-request checkpointer so each thread's steps are saved independently
-    _cp_req: Checkpointer | None = None
-    _store_ref = _invoke_state.get("store")
-    if _store_ref is not None:
-        _cp_req = Checkpointer(
-            _store_ref,
-            thread_id=thread_id,
-            trace_id=_invoke_trace,
-            parent_trace_id=parent_trace_id,
-        )
-        _prior = await _cp_req.load_thread()
-        if _prior:
-            _snap = _prior["checkpoint"] if isinstance(_prior["checkpoint"], dict) else {}
-            _cp_req.history = _snap.get("history", [])
-            _raw_meta = _snap.get("history_meta") or []
-            _cp_req.history_meta = _raw_meta + [{}] * max(0, len(_cp_req.history) - len(_raw_meta))
-            _cp_req.variables = _snap.get("variables", _cp_req.variables)
-            _cp_req.step_index = _prior["step_index"] + 1
-{% endif %}
-
     result_collector: list = []
     _sem = _invoke_state.get("semaphore") or asyncio.Semaphore(1)
     try:
@@ -96,9 +75,6 @@ async def _invoke_handler(request: Request) -> JSONResponse:
 {% if has_composio_tools %}
                 composio_toolset=_invoke_state["composio_toolset"],
                 composio_tool_names=_invoke_state["composio_tool_names"],
-{% endif %}
-{% if has_persistence %}
-                checkpointer=_cp_req,
 {% endif %}
                 result_collector=result_collector,
                 thread_id=thread_id,
@@ -145,9 +121,6 @@ _chat_state: dict = {
     "composio_toolset": None,
     "composio_tool_names": set(),
 {% endif %}
-{% if has_persistence %}
-    "store": None,
-{% endif %}
     "histories": {},   # session_id → list of non-system messages (in-memory context store)
     "ready": False,
 }
@@ -182,25 +155,6 @@ async def _chat_handler(request: Request) -> JSONResponse:
         "model":     LITELLM_MODEL,
     })
 
-{% if has_persistence %}
-    _cp_chat: Checkpointer | None = None
-    _store_ref = _chat_state.get("store")
-    if _store_ref is not None:
-        _cp_chat = Checkpointer(
-            _store_ref,
-            thread_id=thread_id,
-            trace_id=_chat_trace,
-        )
-        _prior = await _cp_chat.load_thread()
-        if _prior:
-            _snap = _prior["checkpoint"] if isinstance(_prior["checkpoint"], dict) else {}
-            _cp_chat.history    = _snap.get("history", [])
-            _raw_meta = _snap.get("history_meta") or []
-            _cp_chat.history_meta = _raw_meta + [{}] * max(0, len(_cp_chat.history) - len(_raw_meta))
-            _cp_chat.variables  = _snap.get("variables", _cp_chat.variables)
-            _cp_chat.step_index = _prior["step_index"] + 1
-{% endif %}
-
     result_collector: list = []
     try:
         await _run_turn(
@@ -210,9 +164,6 @@ async def _chat_handler(request: Request) -> JSONResponse:
 {% if has_composio_tools %}
             composio_toolset=_chat_state["composio_toolset"],
             composio_tool_names=_chat_state["composio_tool_names"],
-{% endif %}
-{% if has_persistence %}
-            checkpointer=_cp_chat,
 {% endif %}
             result_collector=result_collector,
             thread_id=thread_id,

@@ -3,71 +3,46 @@
 async def main() -> None:
     print(f"Agent '{{ agent.name }}' running ({PROVIDER}/{MODEL})")
 
-{% if has_persistence %}
-    _store = StateStore(_resolve_url(PERSISTENCE_URL_TEMPLATE))
-    _cp = None
+    # API-based resume: load prior checkpoint if this thread has a stable ID.
+    # Triggered automatically when AGENTFILE_THREAD_ID is set (always true when
+    # execution.durability is true — injected by `ninetrix run/up`).
+    _saas_cp: "_SaaSCheckpointer | None" = _SaaSCheckpointer(THREAD_ID, TRACE_ID) if (_SAAS_PERSIST and THREAD_ID) else None
+    _session_messages: list = []
     _replay_input: str | None = None
-    try:
-        await _store.connect()
-        print(f"[persistence] Connected to {PERSISTENCE_PROVIDER}. Thread: {THREAD_ID}")
-        _cp = Checkpointer(_store)
 
-        _prior = await _cp.load_thread()
-        if _prior:
-            snap = _prior["checkpoint"]
-            _cp.history = snap.get("history", [])
-            _raw_meta = snap.get("history_meta") or []
-            _cp.history_meta = _raw_meta + [{}] * max(0, len(_cp.history) - len(_raw_meta))
-            _cp.variables = snap.get("variables", _cp.variables)
-            _cp.step_index = _prior["step_index"] + 1
-            print(f"[resume] Restored thread '{THREAD_ID}' at step {_cp.step_index}")
+    if _saas_cp is not None:
+        _prior_data = await _saas_cp.load_prior()
+        if _prior_data:
+            _session_messages = _prior_data.get("history", [])
+            _turn_start_len   = _prior_data.get("turn_start_history_len", 0)
+            _prior_status     = _prior_data.get("status", "")
+            _saas_cp.step_index = _prior_data.get("step_index", 0) + 1
+            _repaired = _repair_history(_session_messages, _turn_start_len)
+            if len(_repaired) < len(_session_messages):
+                _session_messages = _repaired
+                print(f"[resume] Repaired partial turn — rolled back to {_turn_start_len} messages")
+            print(f"[resume] Restored thread '{THREAD_ID}' at step {_saas_cp.step_index}")
 
-            if snap.get("status") == "waiting_for_approval":
-                pending = snap.get("pending_tool_calls", [])
-                if pending:
-                    _pending_tool = pending[0]["function"]
-                    # Roll history back to the start of the interrupted turn
-                    _turn_start_len = snap.get(
-                        "turn_start_history_len",
-                        max(0, len(_cp.history) - 2),
-                    )
-                    # Capture the user message that triggered the turn (for auto-replay)
+            if _prior_status == "waiting_for_approval":
+                _pending = _prior_data.get("pending_tool_calls", [])
+                if _pending:
+                    _pending_tool = _pending[0].get("function", "?")
                     _trigger_msg = (
-                        _cp.history[_turn_start_len]
-                        if len(_cp.history) > _turn_start_len
+                        _session_messages[_turn_start_len]
+                        if len(_session_messages) > _turn_start_len
                         else None
                     )
-                    _cp.history      = _cp.history[:_turn_start_len]
-                    _cp.history_meta = _cp.history_meta[:_turn_start_len]
-
+                    _session_messages = _session_messages[:_turn_start_len]
                     _console.print(
                         f"\n[bold yellow]⏸ Thread was waiting for approval of:[/bold yellow]"
                         f" [bold cyan]{_pending_tool}[/bold cyan]"
                     )
-                    _console.print(
-                        f"  [dim]trace_id={_prior['trace_id']}  "
-                        f"step={_prior['step_index']}[/dim]"
-                    )
                     _console.print("  [dim]Re-polling for decision…[/dim]\n")
-
-                    _resume_elapsed = 0
-                    _resume_decision: str | None = None
-                    while _resume_elapsed < APPROVAL_TIMEOUT:
-                        await asyncio.sleep(APPROVAL_POLL_INTERVAL)
-                        _resume_elapsed += APPROVAL_POLL_INTERVAL
-                        _rs = await _store.poll_status(
-                            _prior["trace_id"], _prior["step_index"]
-                        )
-                        if _rs == "approved":
-                            _resume_decision = "approved"
-                            break
-                        if _rs == "rejected":
-                            _resume_decision = "rejected"
-                            break
-
+                    _resume_decision = await _saas_cp.poll_approval(
+                        _prior_data.get("step_index", 0)
+                    )
                     if _resume_decision == "approved":
                         _console.print("[bold green]✓ Approved.[/bold green]")
-                        # Auto-replay the original user message if we can recover it
                         if (
                             _trigger_msg
                             and _trigger_msg.get("role") == "user"
@@ -92,18 +67,13 @@ async def main() -> None:
                             " Re-send your request to continue.\n"
                         )
 
-        # Register this thread with saas-api (idempotent — ON CONFLICT DO NOTHING)
-        _post_runner_event("thread_started", {
-            "thread_id": THREAD_ID,
-            "trace_id":  TRACE_ID,
-            "agent_id":  AGENT_ID,
-            "trigger":   "api",
-            "model":     LITELLM_MODEL,
-        })
-    except Exception as exc:
-        print(f"[persistence] Warning: could not connect to state store: {exc}", file=sys.stderr)
-        _cp = None
-{% endif %}
+    _post_runner_event("thread_started", {
+        "thread_id": THREAD_ID or os.urandom(8).hex(),
+        "trace_id":  TRACE_ID,
+        "agent_id":  "{{ agent.name }}",
+        "trigger":   "api",
+        "model":     LITELLM_MODEL,
+    })
 
     try:
         async with AsyncExitStack() as stack:
@@ -199,9 +169,6 @@ async def main() -> None:
             # Publish state for the /invoke FastAPI handler
             _invoke_state["sessions_by_tool"] = sessions_by_tool
             _invoke_state["all_tool_defs"] = all_tool_defs
-{% if has_persistence %}
-            _invoke_state["store"] = _store
-{% endif %}
 {% if has_composio_tools %}
             _invoke_state["composio_toolset"] = _composio_toolset
             _invoke_state["composio_tool_names"] = _composio_tool_names
@@ -212,9 +179,6 @@ async def main() -> None:
             # Publish state for the /chat endpoint
             _chat_state["sessions_by_tool"] = sessions_by_tool
             _chat_state["all_tool_defs"]    = all_tool_defs
-{% if has_persistence %}
-            _chat_state["store"] = _store
-{% endif %}
 {% if has_composio_tools %}
             _chat_state["composio_toolset"]    = _composio_toolset
             _chat_state["composio_tool_names"] = _composio_tool_names
@@ -275,38 +239,6 @@ async def main() -> None:
             await asyncio.Event().wait()
 {% else %}
             print("Send a message (Ctrl+C to quit):\n")
-{% if has_persistence %}
-            # When local DB persistence + SaaS telemetry are both active, create a
-            # single session-scoped saas_cp (reused across turns, not recreated per turn).
-            _saas_cp: "_SaaSCheckpointer | None" = _SaaSCheckpointer(THREAD_ID, TRACE_ID) if _SAAS_PERSIST else None
-            if _SAAS_PERSIST:
-                _post_runner_event("thread_started", {
-                    "thread_id": THREAD_ID,
-                    "trace_id":  TRACE_ID,
-                    "agent_id":  "{{ agent.name }}",
-                    "trigger":   "api",
-                    "model":     LITELLM_MODEL,
-                })
-{% else %}
-            # Register this process as a run with saas-api (no-op in local dev)
-            _thr = os.urandom(8).hex()
-            _post_runner_event("thread_started", {
-                "thread_id": _thr,
-                "trace_id":  "run_" + _thr[:8],
-                "agent_id":  "{{ agent.name }}",
-                "trigger":   "api",
-                "model":     LITELLM_MODEL,
-            })
-{% if not has_any_triggers and not has_invoke_server %}
-            # Session-scoped checkpointer — shared across all turns so step_index
-            # increments monotonically and each turn's checkpoints get unique indices
-            # (avoids DB ON CONFLICT overwriting earlier turns' history).
-            _saas_cp: "_SaaSCheckpointer | None" = _SaaSCheckpointer(_thr, "run_" + _thr[:8]) if _SAAS_PERSIST else None
-            # Cumulative message history so the saas_cp always sees a growing list
-            # (required for correct history_meta diff in the timeline endpoint).
-            _stdin_messages: "list" = []
-{% endif %}
-{% endif %}
 {% endif %}
 
 {% if (not is_multi_agent and not is_saas_runner) or has_any_triggers or has_invoke_server %}
@@ -327,7 +259,6 @@ async def main() -> None:
                     "model":     LITELLM_MODEL,
                 })
 {% else %}
-{% if has_persistence %}
                 if _replay_input is not None:
                     user_input = _replay_input
                     _replay_input = None
@@ -337,13 +268,6 @@ async def main() -> None:
                     except (KeyboardInterrupt, EOFError):
                         print("\nBye.")
                         break
-{% else %}
-                try:
-                    user_input = input("> ").strip()
-                except (KeyboardInterrupt, EOFError):
-                    print("\nBye.")
-                    break
-{% endif %}
 
                 if not user_input:
                     continue
@@ -359,19 +283,6 @@ async def main() -> None:
                         _thinking_text, _thnk_in, _thnk_out = await _thinking_phase(user_input)
                 if _thinking_text:
                     _console.print(f"[bold yellow]🧠[/bold yellow] [dim]{_thinking_text[:300]}{'…' if len(_thinking_text) > 300 else ''}[/dim]\n")
-{% if has_persistence %}
-                    if _cp is not None:
-                        _cp.history.append({"role": "thinking", "content": _thinking_text})
-                        _cp.history_meta.append({
-                            "ts": _dt.now(_tz.utc).isoformat(),
-                            "tokens_in":  _thnk_in,
-                            "tokens_out": _thnk_out,
-                        })
-                        # Count thinking tokens against the run budget
-                        _cp.variables["total_input_tokens"]  += _thnk_in
-                        _cp.variables["total_output_tokens"] += _thnk_out
-                        await _cp.save("in_progress")
-{% endif %}
                 # reasoning_hint is passed to _run_turn; injected as ephemeral system
                 # message so the agent sees it but it never pollutes history
 {% endif %}
@@ -413,19 +324,14 @@ async def main() -> None:
                 else:
                     _console.print("[dim]▸ Running in direct mode.[/dim]\n")
 {% endif %}
-{% if has_persistence %}
-                _history_snapshot = len(_cp.history) if _cp is not None else 0
-                if _cp is not None:
-                    _cp.turn_start_history_len = _history_snapshot
-{% endif %}
-{% if not has_persistence %}
 {% if has_any_triggers or has_invoke_server %}
                 # Each trigger/invoke is a separate run — create a fresh checkpointer
                 _saas_cp = _SaaSCheckpointer(
                     run_id, "run_" + run_id[:8],
                 ) if _SAAS_PERSIST else None
 {% endif %}
-{% endif %}
+                if _saas_cp is not None:
+                    _saas_cp.turn_start_history_len = len(_session_messages)
 {% if has_thinking_step %}
                 if _saas_cp is not None:
                     _saas_cp.tokens_used += _thnk_in + _thnk_out
@@ -442,18 +348,15 @@ async def main() -> None:
                         composio_toolset=_composio_toolset,
                         composio_tool_names=_composio_tool_names,
 {% endif %}
-{% if has_persistence %}
-                        checkpointer=_cp,
-{% endif %}
 {% if has_planned_execution %}
                         plan_goal=_plan_goal,
 {% elif has_verifier %}
                         plan_goal=user_input,
 {% endif %}
                         saas_cp=_saas_cp,
-{% if not has_persistence and not has_any_triggers and not has_invoke_server %}
-                        prior_messages=_stdin_messages,
-                        messages_out=_stdin_messages,
+{% if not has_any_triggers and not has_invoke_server %}
+                        prior_messages=_session_messages,
+                        messages_out=_session_messages,
 {% endif %}
 {% if has_thinking_step %}
                         reasoning_hint=_thinking_text or "",
@@ -463,17 +366,8 @@ async def main() -> None:
                     raise
                 except BaseException as exc:
                     print(f"[error] {type(exc).__name__}: {exc}", file=sys.stderr)
-{% if has_persistence %}
-                    if _cp is not None:
-                        # Restore history to pre-turn state so any partial tool_use
-                        # messages without matching tool_result blocks are dropped.
-                        _cp.history      = _cp.history[:_history_snapshot]
-                        _cp.history_meta = _cp.history_meta[:_history_snapshot]
-                        try:
-                            await _cp.save("error")
-                        except Exception:
-                            pass
-{% endif %}
+                    # _session_messages is not updated on exception (messages_out only
+                    # written on success), so history rolls back to pre-turn state automatically.
 {% if has_any_triggers or has_invoke_server %}
                     print("[info] Run failed — will retry on next trigger.", file=sys.stderr)
                     _post_runner_event("thread_error", {"thread_id": run_id or ""})
@@ -490,14 +384,8 @@ async def main() -> None:
 {% endif %}{# not is_multi_agent or has_any_triggers #}
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
-{% if has_persistence or has_webhook_triggers or has_schedule_triggers or is_multi_agent or has_s3_volumes or is_saas_runner or has_invoke_server %}
+{% if has_webhook_triggers or has_schedule_triggers or is_multi_agent or has_s3_volumes or is_saas_runner or has_invoke_server %}
     finally:
-{% if has_persistence %}
-        try:
-            await _store.close()
-        except Exception:
-            pass
-{% endif %}
 {% if has_webhook_triggers or is_multi_agent or is_saas_runner %}
         try:
             _uvicorn_server.should_exit = True

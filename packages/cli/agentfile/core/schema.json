@@ -12,17 +12,6 @@
       "description": "Agentfile schema version (for human reference only)"
     },
 
-    "persistence": {
-      "type": "object",
-      "description": "Global persistence config — saves full message history and tool results to PostgreSQL so runs can be resumed with --thread-id. Can be overridden per-agent.",
-      "required": ["provider", "url"],
-      "additionalProperties": false,
-      "properties": {
-        "provider": { "type": "string", "enum": ["postgres"], "description": "Storage backend. Only 'postgres' is supported." },
-        "url":      { "type": "string", "minLength": 1, "description": "PostgreSQL connection URL. Use ${ENV_VAR} to reference environment variables (e.g. ${DATABASE_URL})." }
-      }
-    },
-
     "governance": {
       "type": "object",
       "description": "Global governance config — controls spending, human approval gates, and rate limits. Can be overridden per-agent.",
@@ -56,6 +45,7 @@
         "verify_steps": { "type": "boolean", "description": "After each tool call, a separate verifier LLM checks the result before proceeding." },
         "max_steps": { "type": "integer", "minimum": 1, "maximum": 50 },
         "on_step_failure": { "type": "string", "enum": ["abort", "continue", "retry_once"] },
+        "durability": { "type": "boolean", "description": "When true (default), the agent automatically restarts and resumes from the last checkpoint on crash. Set to false to disable. Requires persistence to be configured." },
         "verifier": {
           "type": "object",
           "additionalProperties": false,
@@ -207,6 +197,7 @@
               "mode": { "type": "string", "enum": ["direct", "planned"], "description": "'direct' = standard tool-use loop. 'planned' = generate a JSON plan first, then execute step-by-step." },
               "verify_steps": { "type": "boolean", "description": "After each tool call, a separate verifier LLM checks the result before proceeding." },
               "max_steps": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum number of steps in a planned execution. Defaults to 10." },
+              "durability": { "type": "boolean", "description": "When true (default), the agent automatically restarts and resumes from the last checkpoint on crash. Set to false to disable. Requires persistence to be configured." },
               "on_step_failure": {
                 "type": "string",
                 "enum": ["abort", "continue", "retry_once"],
@@ -409,7 +400,8 @@
                     "mode":             { "type": "string", "enum": ["direct", "planned"] },
                     "verify_steps":     { "type": "boolean" },
                     "max_steps":        { "type": "integer", "minimum": 1, "maximum": 50 },
-                    "on_step_failure":  { "type": "string", "enum": ["abort", "continue", "retry_once"] }
+                    "on_step_failure":  { "type": "string", "enum": ["abort", "continue", "retry_once"] },
+                    "durability":       { "type": "boolean" }
                   }
                 },
                 "persistence": {

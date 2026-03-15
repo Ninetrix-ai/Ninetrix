@@ -218,4 +218,26 @@ class Checkpointer:
         return False
 
 
+
 {% endif %}
+
+def _repair_history(history: list, turn_start_len: int) -> list:
+    """Roll back a partial turn left by a hard crash (OOM kill, SIGKILL, etc.).
+
+    A partial turn is an assistant message with tool_calls that has no matching
+    tool_result messages following it — this happens when the container is killed
+    between the LLM-response checkpoint and the tool-result checkpoint.
+
+    Rolling back to turn_start_len is safe: the whole turn re-executes cleanly
+    on next resume (same history → same LLM output → same tool calls).
+    """
+    for i in range(len(history) - 1, -1, -1):
+        msg = history[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            has_results = any(
+                history[j].get("role") == "tool"
+                for j in range(i + 1, len(history))
+            )
+            if not has_results:
+                return history[:turn_start_len]
+    return history

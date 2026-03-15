@@ -15,7 +15,7 @@ async def _transfer_to_agent(
         "caller_agent": AGENT_NAME,
         "message": message,
         "context": context,
-        "parent_trace_id": caller_trace_id{% if has_persistence %} or TRACE_ID{% endif %},
+        "parent_trace_id": caller_trace_id,
     }
     print(f"[transfer→] {AGENT_NAME} → {agent}: {message[:120]}", flush=True)
     try:

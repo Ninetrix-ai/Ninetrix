@@ -176,18 +176,6 @@ def _build_agent_env(
             if val:
                 env[cvar] = val
 
-    eff_pers = af.effective_persistence(agent_def)
-    if eff_pers:
-        m = re.search(r'\$\{([^}]+)\}', eff_pers.url)
-        if m:
-            var_name = m.group(1)
-            if var_name == "DATABASE_URL":
-                env["DATABASE_URL"] = _db_url(db_hostname, db_port)
-            else:
-                val = os.environ.get(var_name) or _load_dotenv_key(var_name) or ""
-                if val:
-                    env[var_name] = val
-
     for peer_name, peer_url in peer_urls.items():
         if peer_name != agent_name:
             env_key = f"AGENTFILE_PEER_{peer_name.upper().replace('-', '_')}_URL"
