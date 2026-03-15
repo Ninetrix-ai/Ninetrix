@@ -11,7 +11,7 @@
 ```bash
 pip install ninetrix
 # or
-brew install ninetrix
+pipx install ninetrix
 # or
 uv tool install ninetrix
 ```
