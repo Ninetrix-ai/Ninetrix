@@ -186,8 +186,7 @@ def run_cmd(agentfile_path: str, image: str | None, tag: str, extra_env: tuple[s
         )
         _auto_build(agent, af, agentfile_path, tag)
 
-    # Resolve effective governance/persistence for the entry agent
-    eff_persistence = af.effective_persistence(agent)
+    # Resolve effective governance for the entry agent
     eff_governance  = af.effective_governance(agent)
 
     # Always sync runtime config from the live agentfile, overriding baked-in Docker ENV.
@@ -236,18 +235,9 @@ def run_cmd(agentfile_path: str, image: str | None, tag: str, extra_env: tuple[s
                 console.print("  [yellow]Warning:[/yellow] COMPOSIO_API_KEY is not set — "
                               "Composio tools will fail at runtime.")
 
-    if eff_persistence:
-        # Forward the env var referenced by ${VAR_NAME} in the persistence URL
-        m = re.search(r'\$\{([^}]+)\}', eff_persistence.url)
-        if m:
-            var_name = m.group(1)
-            val = os.environ.get(var_name) or _load_dotenv_key(var_name) or ""
-            if val:
-                env[var_name] = val
-            else:
-                console.print(f"  [yellow]Warning:[/yellow] env var [bold]{var_name}[/bold] "
-                              f"(referenced in persistence.url) is not set in env or .env file.")
-        env["AGENTFILE_THREAD_ID"] = thread_id or str(uuid.uuid4())
+    use_durability = eff_execution.durability
+    if use_durability:
+        env["AGENTFILE_THREAD_ID"] = thread_id or uuid.uuid4().hex
         console.print(f"  [dim]Thread ID:[/dim] {env['AGENTFILE_THREAD_ID']}")
 
     notify_url = eff_governance.human_approval.notify_url
@@ -410,5 +400,6 @@ def run_cmd(agentfile_path: str, image: str | None, tag: str, extra_env: tuple[s
         memory=res.memory,
         warm_pool=res.warm_pool,
         volumes=local_volumes,
+        restart_policy="on-failure:3" if use_durability else None,
     )
     console.print()

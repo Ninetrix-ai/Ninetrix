@@ -23,12 +23,6 @@ from apscheduler.triggers.cron import CronTrigger
 {% if has_collaborators %}
 import aiohttp
 {% endif %}
-{% if (has_any_triggers or is_saas_runner or has_invoke_server) and not has_persistence and not is_multi_agent %}
-import uuid
-{% endif %}
-{% if is_multi_agent and not has_persistence and not has_any_triggers %}
-import uuid
-{% endif %}
 import json
 import os
 import sys
@@ -95,16 +89,13 @@ _VOLUME_CONTEXT = (
 SYSTEM_PROMPT = (SYSTEM_PROMPT + _VOLUME_CONTEXT) if SYSTEM_PROMPT else _VOLUME_CONTEXT.strip()
 {% endif %}
 
-{% if has_persistence %}
-# ── Persistence constants ─────────────────────────────────────────────────────
-PERSISTENCE_URL_TEMPLATE = "{{ persistence_url_template }}"
-PERSISTENCE_PROVIDER = "{{ persistence_provider }}"
-THREAD_ID = os.environ.get("AGENTFILE_THREAD_ID") or str(uuid.uuid4())
+# ── Durable run identity ──────────────────────────────────────────────────────
+# THREAD_ID is stable across restarts (injected by `ninetrix run/up` when
+# execution.durability is true) so agents always resume from their last checkpoint.
+THREAD_ID = os.environ.get("AGENTFILE_THREAD_ID", "")
 TRACE_ID = "run_" + uuid.uuid4().hex[:8]
-APPROVAL_POLL_INTERVAL = 5   # seconds between DB polls
-APPROVAL_TIMEOUT = 3600      # 1 hour hard timeout
-APPROVAL_NOTIFY_URL = os.environ.get("AGENTFILE_APPROVAL_NOTIFY_URL", "{{ approval_notify_url }}")
-{% endif %}
+APPROVAL_POLL_INTERVAL = 5   # seconds between API polls for HITL decisions
+APPROVAL_TIMEOUT = 3600      # 1 hour hard timeout for human approval
 
 {% if has_any_triggers %}
 # ── Trigger constants ─────────────────────────────────────────────────────────

@@ -371,7 +371,7 @@ def _msg_to_events(msg: dict, row: object, meta: dict | None = None, prev_meta: 
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
                         tokens_used=tokens_used,
-                        duration_ms=duration_ms,
+                        duration_ms=None,  # tool dispatch is instantaneous; execution time is on tool_result
                     ))
         elif isinstance(content, str) and content.strip():
             # OpenAI/litellm format: content is a plain string
@@ -407,7 +407,7 @@ def _msg_to_events(msg: dict, row: object, meta: dict | None = None, prev_meta: 
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 tokens_used=tokens_used,
-                duration_ms=duration_ms,
+                duration_ms=None,  # tool dispatch is instantaneous; execution time is on tool_result
             ))
 
     elif role == "tool":

@@ -97,9 +97,13 @@ async def ingest_events(
                     input_tokens    = int(data.get("input_tokens", 0) or 0)
                     output_tokens   = int(data.get("output_tokens", 0) or 0)
                     model           = data.get("model", "")
+                    turn_start_history_len = int(data.get("turn_start_history_len", 0) or 0)
+                    pending_tool_calls     = data.get("pending_tool_calls", []) or []
                     checkpoint_json = json.dumps({
-                        "history":      history,
-                        "history_meta": history_meta,
+                        "history":                history,
+                        "history_meta":           history_meta,
+                        "turn_start_history_len": turn_start_history_len,
+                        "pending_tool_calls":     pending_tool_calls,
                     })
                     metadata_json = json.dumps({
                         "tokens_used":   tokens_used,
@@ -171,3 +175,46 @@ async def ingest_events(
         raise
 
     return {"saved": len(payload.events)}
+
+
+@router.get("/threads/{thread_id}/latest")
+async def get_latest_checkpoint(
+    thread_id: str,
+    _: None = Depends(verify_token),
+) -> dict:
+    """Return the latest checkpoint for a thread — used by agents on startup
+    to resume from their last known-good state (durable runs).
+
+    Returns 404 if no checkpoint exists for this thread_id.
+    """
+    try:
+        async with db.pool().acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT trace_id, step_index, status, checkpoint, metadata
+                FROM agentfile_checkpoints
+                WHERE thread_id = $1
+                ORDER BY step_index DESC
+                LIMIT 1
+                """,
+                thread_id,
+            )
+    except Exception:
+        log.exception("get_latest_checkpoint | unhandled error")
+        raise
+
+    if row is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="No checkpoint found")
+
+    cp = row["checkpoint"] if isinstance(row["checkpoint"], dict) else json.loads(row["checkpoint"])
+    return {
+        "thread_id":              thread_id,
+        "trace_id":               row["trace_id"],
+        "step_index":             row["step_index"],
+        "status":                 row["status"],
+        "history":                cp.get("history", []),
+        "history_meta":           cp.get("history_meta", []),
+        "turn_start_history_len": cp.get("turn_start_history_len", 0),
+        "pending_tool_calls":     cp.get("pending_tool_calls", []),
+    }

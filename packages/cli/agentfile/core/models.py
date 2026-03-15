@@ -128,12 +128,6 @@ class Trigger:
 
 
 @dataclass
-class Persistence:
-    provider: str = "postgres"
-    url: str = ""
-
-
-@dataclass
 class Verifier:
     provider: str = ""   # defaults to agent's provider when empty
     model: str = ""      # defaults to agent's model when empty
@@ -159,6 +153,7 @@ class Execution:
     on_step_failure: str = "continue"  # "abort" | "continue" | "retry_once"
     verifier: Verifier = field(default_factory=Verifier)
     thinking: ThinkingConfig = field(default_factory=ThinkingConfig)
+    durability: bool = True            # crash-safe: auto-restart + resume from last checkpoint
 
 
 @dataclass
@@ -207,7 +202,6 @@ class AgentDef:
     goal: str = ""
     instructions: str = ""
     constraints: list[str] = field(default_factory=list)
-    persistence: Optional[Persistence] = None        # overrides global if set
     execution: Optional[Execution] = None
     collaborators: list[str] = field(default_factory=list)
     resources: Resources = field(default_factory=Resources)
@@ -274,15 +268,6 @@ def _parse_trigger(t: dict) -> Trigger:
     )
 
 
-def _parse_persistence(pers_raw: dict | None) -> Optional[Persistence]:
-    if not pers_raw:
-        return None
-    return Persistence(
-        provider=str(pers_raw.get("provider", "postgres")),
-        url=str(pers_raw.get("url", "")),
-    )
-
-
 def _parse_execution(exec_raw: dict) -> Execution:
     ver_raw = exec_raw.get("verifier") or {}
     thinking_raw = exec_raw.get("thinking")
@@ -311,6 +296,7 @@ def _parse_execution(exec_raw: dict) -> Execution:
             max_tokens=int(ver_raw.get("max_tokens", 128)),
         ),
         thinking=thinking,
+        durability=bool(exec_raw.get("durability", True)),
     )
 
 
@@ -372,7 +358,6 @@ def _parse_agent_def(key: str, araw: dict) -> AgentDef:
         goal=str(meta.get("goal", "") or ""),
         instructions=str(meta.get("instructions", "") or ""),
         constraints=list(meta.get("constraints") or []),
-        persistence=_parse_persistence(araw.get("persistence")),
         execution=_parse_execution(araw["execution"]) if "execution" in araw else None,
         collaborators=list(araw.get("collaborators") or []),
         resources=_parse_resources(runtime.get("resources") or {}),
@@ -387,7 +372,6 @@ def _parse_agent_def(key: str, araw: dict) -> AgentDef:
 class AgentFile:
     """Root model — always uses agents: map (single or multi)."""
     agents: dict[str, AgentDef]         # ordered; first declared = entry point
-    persistence: Optional[Persistence]  # global default
     governance: Governance              # global default
     triggers: list[Trigger]             # global triggers
     execution: Optional[Execution] = None                         # global default
@@ -435,7 +419,6 @@ class AgentFile:
         global_exec_raw = data.get("execution")
         return cls(
             agents=agents,
-            persistence=_parse_persistence(data.get("persistence")),
             governance=_parse_governance(data.get("governance") or {}),
             triggers=[_parse_trigger(t) for t in (data.get("triggers") or [])],
             execution=_parse_execution(global_exec_raw) if global_exec_raw is not None else None,
@@ -476,10 +459,6 @@ class AgentFile:
     def effective_execution(self, agent: AgentDef) -> Execution:
         """Agent-level execution overrides global; falls back to global; falls back to defaults."""
         return agent.execution or self.execution or Execution()
-
-    def effective_persistence(self, agent: AgentDef) -> Optional[Persistence]:
-        """Agent-level persistence overrides global; falls back to global."""
-        return agent.persistence or self.persistence
 
     def effective_governance(self, agent: AgentDef) -> Governance:
         """Agent-level governance overrides global; falls back to global."""
@@ -581,18 +560,6 @@ class AgentFile:
                     errors.append(
                         f"{prefix}.execution.verifier.provider "
                         f"'{eff_exec.verifier.provider}' is not a known provider"
-                    )
-
-            eff_pers = self.effective_persistence(agent)
-            if eff_pers is not None:
-                if not eff_pers.url:
-                    errors.append(
-                        f"{prefix}: persistence.url is required when persistence is configured"
-                    )
-                if eff_pers.provider != "postgres":
-                    errors.append(
-                        f"{prefix}: persistence.provider '{eff_pers.provider}' is not supported "
-                        "(only 'postgres' is supported)"
                     )
 
             for i, trigger in enumerate(agent.triggers):

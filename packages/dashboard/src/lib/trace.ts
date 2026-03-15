@@ -137,6 +137,15 @@ export function timelineEventsToTraceNodes(
         inputTok != null && outputTok != null
           ? estimateCost(thread.model, inputTok, outputTok)
           : null;
+      // ev.ts is the LLM *completion* time; back-calculate the start so the bar
+      // spans [user_message → LLM_response] instead of [LLM_response → LLM_response+duration].
+      const llmDurationMs = ev.duration_ms ?? null;
+      const llmStartOffsetMs =
+        llmDurationMs != null ? Math.max(0, offsetMs - llmDurationMs) : offsetMs;
+      const llmStartIso =
+        llmDurationMs != null
+          ? new Date(new Date(ev.ts).getTime() - llmDurationMs).toISOString()
+          : ev.ts;
       nodes.push({
         id: makeId(),
         parentId: null,
@@ -145,9 +154,9 @@ export function timelineEventsToTraceNodes(
         label: ev.agent_id,
         agentId: ev.agent_id,
         status: "success",
-        startOffsetMs: offsetMs,
-        durationMs: ev.duration_ms ?? null,
-        absoluteStartIso: ev.ts,
+        startOffsetMs: llmStartOffsetMs,
+        durationMs: llmDurationMs,
+        absoluteStartIso: llmStartIso,
         absoluteEndIso: null,
         model: thread.model || null,
         inputTokens: inputTok,
