@@ -33,11 +33,6 @@ def build_context(
         has_invoke_server: True when agent.serve is enabled (CLI path).
         _warn:            Optional callable for MCP registry warnings.
     """
-    try:
-        from agentfile.core.mcp_registry import resolve
-    except ImportError:
-        pass
-
     eff_governance  = af.effective_governance(agent_def)
     eff_persistence = af.effective_persistence(agent_def)
     eff_triggers    = af.effective_triggers(agent_def)

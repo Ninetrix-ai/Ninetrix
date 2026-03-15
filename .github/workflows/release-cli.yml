@@ -1,64 +1,113 @@
 name: Release CLI
 
 on:
-  push:
-    tags:
-      - "cli/v*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 jobs:
-  publish:
-    name: Publish to PyPI
+  release:
+    name: Bump, publish & update tap
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: write
       id-token: write  # OIDC trusted publishing
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Extract version from tag
-        run: echo "VERSION=${GITHUB_REF#refs/tags/cli/v}" >> $GITHUB_ENV
-      - name: Set version in pyproject.toml
-        run: sed -i "s/^version = .*/version = \"${VERSION}\"/" packages/cli/pyproject.toml
+
+      - name: Compute new version
+        id: version
+        run: |
+          CURRENT=$(python - <<'EOF'
+          import re
+          with open("packages/cli/pyproject.toml") as f:
+              m = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
+              print(m.group(1))
+          EOF
+          )
+          BUMP="${{ inputs.bump }}"
+          NEW=$(python - <<EOF
+          parts = "$CURRENT".split(".")
+          major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+          if "$BUMP" == "major":
+              major += 1; minor = 0; patch = 0
+          elif "$BUMP" == "minor":
+              minor += 1; patch = 0
+          else:
+              patch += 1
+          print(f"{major}.{minor}.{patch}")
+          EOF
+          )
+          TAG="cli/v$NEW"
+          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            echo "::error::Tag $TAG already exists. Delete it first or choose a different bump type."
+            exit 1
+          fi
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "new=$NEW"         >> $GITHUB_OUTPUT
+          echo "tag=$TAG"         >> $GITHUB_OUTPUT
+
+      - name: Update pyproject.toml
+        run: sed -i "s/^version = .*/version = \"${{ steps.version.outputs.new }}\"/" packages/cli/pyproject.toml
+
+      - name: Commit & tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/cli/pyproject.toml
+          git commit -m "chore(cli): bump version to ${{ steps.version.outputs.new }}"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin HEAD "${{ steps.version.outputs.tag }}"
+
       - name: Build wheel
         run: |
           pip install build
           cd packages/cli
           python -m build
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: packages/cli/dist/
 
-  update-homebrew-tap:
-    name: Update Homebrew tap
-    runs-on: ubuntu-latest
-    needs: publish
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Extract version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/cli/v}" >> $GITHUB_ENV
       - name: Get tarball SHA256 from PyPI
         run: |
           pip install requests -q
-          python - <<'EOF'
-          import os, hashlib, urllib.request, json
-          version = os.environ["VERSION"]
-          meta = json.loads(urllib.request.urlopen(
-              f"https://pypi.org/pypi/ninetrix/{version}/json"
-          ).read())
-          for f in meta["urls"]:
-              if f["packagetype"] == "sdist":
-                  print(f"SHA256={f['digests']['sha256']}", flush=True)
-                  break
-          EOF >> $GITHUB_ENV
+          python - <<'EOF' >> $GITHUB_ENV
+          import os, urllib.request, json, time
+          version = os.environ["NEW"]
+          for _ in range(6):
+              try:
+                  meta = json.loads(urllib.request.urlopen(
+                      f"https://pypi.org/pypi/ninetrix/{version}/json"
+                  ).read())
+                  for f in meta["urls"]:
+                      if f["packagetype"] == "sdist":
+                          print(f"SHA256={f['digests']['sha256']}", flush=True)
+                          exit(0)
+              except Exception:
+                  time.sleep(10)
+          EOF
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+
       - name: Dispatch formula update to homebrew-tap
+        if: env.SHA256 != ''
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
@@ -66,6 +115,6 @@ jobs:
           event-type: update-formula
           client-payload: |
             {
-              "version": "${{ env.VERSION }}",
+              "version": "${{ steps.version.outputs.new }}",
               "sha256": "${{ env.SHA256 }}"
             }
