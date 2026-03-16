@@ -24,6 +24,8 @@ out/
 .env.*.local
 !.env.example
 
+CLAUDE.md
+
 # Static build output (generated at build time — not committed)
 packages/api/static/dashboard/
 
