@@ -342,14 +342,14 @@ def _charge(model_spec: str, in_tok: int, out_tok: int, label: str = "") -> None
     if AGENTFILE_SHOW_COST:
         _tag = f" [{label}]" if label else ""
         print(
-            f"[cost]{_tag} ${cost:.4f} | total: ${_run_cost:.4f} / ${MAX_BUDGET_USD:.2f}",
+            f"[cost]{_tag} ${cost:.4f} | total: ${_run_cost:.4f} / ${MAX_BUDGET_USD:.4f}",
             flush=True,
         )
     if not _budget_warned and _run_cost >= MAX_BUDGET_USD * 0.8:
         _budget_warned = True
         _pct = int(100 * _run_cost / MAX_BUDGET_USD)
         print(
-            f"[budget] Warning: {_pct}% used (${_run_cost:.4f} / ${MAX_BUDGET_USD:.2f})",
+            f"[budget] Warning: {_pct}% used (${_run_cost:.4f} / ${MAX_BUDGET_USD:.4f})",
             file=sys.stderr, flush=True,
         )
         _post_runner_event("budget_warning", {
@@ -362,7 +362,7 @@ def _charge(model_spec: str, in_tok: int, out_tok: int, label: str = "") -> None
         })
     if _run_cost >= MAX_BUDGET_USD:
         raise BudgetExceededError(
-            f"Run budget exhausted: ${_run_cost:.4f} >= ${MAX_BUDGET_USD:.2f} "
+            f"Run budget exhausted: ${_run_cost:.4f} >= ${MAX_BUDGET_USD:.4f} "
             f"({_run_in_tok} in + {_run_out_tok} out tokens)"
         )
 
