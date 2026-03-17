@@ -1075,6 +1075,7 @@ function TraceDrawer({
   const [selectedNode, setSelectedNode] = useState<TraceNode | null>(null);
   const sseRef = useRef<(() => void) | null>(null);
   const accEventsRef = useRef<TimelineEvent[]>([]);
+  const sseFirstBatch = useRef(true);
 
   // Resizable split for timeline view
   const [topHeight, setTopHeight] = useState(280);
@@ -1127,13 +1128,19 @@ function TraceDrawer({
 
     // Stream live updates if running or idle (container still alive, waiting for next message)
     if (normalizeStatus(thread.status) === "running" || normalizeStatus(thread.status) === "idle") {
-      // Reset accumulator so first SSE batch replaces rather than duplicates
-      accEventsRef.current = [];
+      sseFirstBatch.current = true;
       const cleanup = subscribeThreadStream(
         thread.thread_id,
         (update: StreamUpdate) => {
           if (update.events.length > 0) {
-            accEventsRef.current = [...accEventsRef.current, ...update.events];
+            if (sseFirstBatch.current) {
+              // First SSE batch always contains full history — replace to avoid
+              // race condition with fetchTimeline() which also sets accEventsRef
+              accEventsRef.current = update.events;
+              sseFirstBatch.current = false;
+            } else {
+              accEventsRef.current = [...accEventsRef.current, ...update.events];
+            }
             setEvents([...accEventsRef.current]);
             setNodes(timelineEventsToTraceNodes(accEventsRef.current, thread));
           }
