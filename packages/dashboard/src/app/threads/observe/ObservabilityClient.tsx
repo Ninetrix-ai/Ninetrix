@@ -1151,6 +1151,7 @@ export default function ObservabilityClient() {
   const sseRef = useRef<(() => void) | null>(null);
   const liveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const accEventsRef = useRef<TimelineEvent[]>([]);
+  const sseFirstBatch = useRef(true);
 
   const isRunning = thread ? normalizeStatus(thread.status) === "running" : false;
   // isLive: container is alive and accepting messages (running or idle)
@@ -1196,16 +1197,21 @@ export default function ObservabilityClient() {
   useEffect(() => {
     if (!thread || !isLive) return;
 
-    // Reset accumulator so first SSE batch replaces rather than duplicates
-    // (server always starts from step 0, so first tick re-sends all existing events)
-    accEventsRef.current = [];
+    sseFirstBatch.current = true;
 
     const cleanup = subscribeThreadStream(
       thread.thread_id,
       (update: StreamUpdate) => {
         // Append new events and rebuild nodes
         if (update.events.length > 0) {
-          accEventsRef.current = [...accEventsRef.current, ...update.events];
+          if (sseFirstBatch.current) {
+            // First SSE batch always contains full history — replace to avoid
+            // race condition with fetchTimeline() which also sets accEventsRef
+            accEventsRef.current = update.events;
+            sseFirstBatch.current = false;
+          } else {
+            accEventsRef.current = [...accEventsRef.current, ...update.events];
+          }
           setNodes(timelineEventsToTraceNodes(accEventsRef.current, thread));
         }
         // Update thread metadata when status or step changes

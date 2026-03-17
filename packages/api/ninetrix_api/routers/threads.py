@@ -494,7 +494,7 @@ async def get_timeline(thread_id: str):
         prev = agent_prev_len.get(row["agent_id"], 0)
         new_msgs = history[prev:]
         new_meta = history_meta[prev:]
-        agent_prev_len[row["agent_id"]] = len(history)
+        agent_prev_len[row["agent_id"]] = max(prev, len(history))
 
         # Build tool_call_id → tool_name map from full history so tool_result
         # events can carry the tool name (OpenAI format stores it only on the call).
@@ -583,7 +583,9 @@ async def stream_thread(thread_id: str, request: Request):
                 prev = agent_prev_len.get(row["agent_id"], 0)
                 new_msgs = history[prev:]
                 new_meta = history_meta[prev:]
-                agent_prev_len[row["agent_id"]] = len(history)
+                # Use max to prevent the cursor from moving backwards when earlier
+                # checkpoint rows (with shorter history) process before later ones
+                agent_prev_len[row["agent_id"]] = max(prev, len(history))
 
                 prev_meta = agent_prev_meta.get(row["agent_id"], {})
                 for msg, meta in zip(new_msgs, new_meta):

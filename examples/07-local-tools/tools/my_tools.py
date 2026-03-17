@@ -6,7 +6,7 @@ bundled into the Docker image. The LLM can call them just like MCP tools.
 """
 
 from ninetrix import Tool
-
+import time
 
 @Tool
 def calculate_stats(numbers: list, metric: str = "mean") -> float:
@@ -85,3 +85,10 @@ def magic_number() -> int:
     """Return a magic number."""
     print("magic_number called")
     return 42
+
+
+@Tool(name="sleep_for_seconds", description="Sleep for a given number of seconds")
+def sleep_for_seconds(seconds: int) -> None:
+    """Sleep for a given number of seconds."""
+    time.sleep(seconds)
+    return None
