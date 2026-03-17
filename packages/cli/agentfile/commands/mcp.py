@@ -23,7 +23,7 @@ from rich.table import Table
 
 from agentfile.core import mcp_catalog, worker_config
 from agentfile.core.auth import auth_headers, read_token
-from agentfile.core.config import resolve_api_url, resolve_saas_url
+from agentfile.core.config import resolve_saas_url
 
 console = Console()
 

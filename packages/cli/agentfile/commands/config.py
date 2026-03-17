@@ -10,7 +10,6 @@ from rich.table import Table
 
 from agentfile.core.config import (
     CONFIG_FILE,
-    _CLOUD_DEFAULT,
     api_url_source,
     get_api_url,
     read_config,

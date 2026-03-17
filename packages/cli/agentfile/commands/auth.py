@@ -18,9 +18,7 @@ from agentfile.core.auth import (
 from agentfile.core.config import (
     CONFIG_FILE,
     _CLOUD_DEFAULT,
-    api_url_source,
     get_api_url,
-    resolve_api_url,
     set_api_url,
 )
 
