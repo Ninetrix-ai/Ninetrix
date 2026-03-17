@@ -60,6 +60,15 @@ def set_api_url(url: str) -> None:
     write_config({"api_url": url})
 
 
+def clear_api_url() -> None:
+    """Remove the api_url key from config.json."""
+    current = read_config()
+    current.pop("api_url", None)
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(current, indent=2))
+    CONFIG_FILE.chmod(0o644)
+
+
 def resolve_api_url() -> str:
     """Return the best available API URL for use in CLI commands.
 

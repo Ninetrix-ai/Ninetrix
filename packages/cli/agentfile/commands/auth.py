@@ -9,6 +9,7 @@ import httpx
 from rich.console import Console
 
 from agentfile.core.auth import (
+    CLOUD_SECRET_FILE,
     SECRET_FILE,
     TOKEN_FILE,
     auth_headers,
@@ -18,6 +19,7 @@ from agentfile.core.auth import (
 from agentfile.core.config import (
     CONFIG_FILE,
     _CLOUD_DEFAULT,
+    clear_api_url,
     get_api_url,
     set_api_url,
 )
@@ -62,18 +64,21 @@ def auth_login(token: str, api_url: str | None) -> None:
     # Verify the token against the live API before saving
     try:
         resp = httpx.get(
-            f"{url}/v1/integrations/credentials",
+            f"{url}/v1/tokens",
             headers={"Authorization": f"Bearer {token}"},
             timeout=5,
         )
         if resp.status_code == 401:
             console.print("  [red]✗[/red] Token rejected — double-check it's correct.\n")
             raise SystemExit(1)
+        if resp.status_code == 403:
+            console.print("  [red]✗[/red] Token has insufficient permissions.\n")
+            raise SystemExit(1)
         if resp.status_code not in (200,):
             console.print(
-                f"  [yellow]⚠[/yellow]  API returned {resp.status_code}. "
-                "Saving credentials anyway."
+                f"  [red]✗[/red] API returned {resp.status_code} — token not saved.\n"
             )
+            raise SystemExit(1)
     except httpx.ConnectError:
         console.print(
             f"  [yellow]⚠[/yellow]  Could not reach [dim]{url}[/dim] — "
@@ -94,12 +99,17 @@ def auth_login(token: str, api_url: str | None) -> None:
 
 @auth_cmd.command("logout")
 def auth_logout() -> None:
-    """Remove the stored API token."""
+    """Remove the stored API token and saved API URL."""
     console.print()
-    if not TOKEN_FILE.exists():
+    if not TOKEN_FILE.exists() and not get_api_url():
         console.print("  [dim]No token stored — nothing to remove.[/dim]\n")
         return
     clear_token()
+    # Also clear the saved API URL so subsequent commands don't silently target
+    # the old SaaS endpoint without a token.
+    if get_api_url():
+        clear_api_url()
+        console.print(f"  [green]✓[/green] API URL cleared  → [dim]{CONFIG_FILE}[/dim]")
     console.print("  [green]✓[/green] Token removed.\n")
 
 
@@ -125,6 +135,8 @@ def auth_status(api_url: str | None) -> None:
                 token_method = "[dim]token file (empty)[/dim]"
         except Exception:
             token_method = "[dim]token file (unreadable)[/dim]"
+    elif CLOUD_SECRET_FILE.exists():
+        token_method = f"cloud secret [dim]({CLOUD_SECRET_FILE})[/dim]"
     elif SECRET_FILE.exists():
         token_method = f"machine secret [dim]({SECRET_FILE})[/dim]"
     else:
@@ -136,7 +148,7 @@ def auth_status(api_url: str | None) -> None:
     # Connectivity check
     try:
         resp = httpx.get(
-            f"{url}/v1/integrations/credentials",
+            f"{url}/v1/tokens",
             headers=auth_headers(url),
             timeout=3,
         )
