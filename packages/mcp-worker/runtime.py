@@ -29,6 +29,7 @@ _MANAGED_PACKAGES: dict[str, str] = {
     "google-drive":  "@modelcontextprotocol/server-google-drive",
     "google-sheets": "@modelcontextprotocol/server-google-drive",  # uses same package
     "google-docs":   "@modelcontextprotocol/server-google-drive",
+    "tavily":        "tavily-mcp",
     "brave-search":  "@modelcontextprotocol/server-brave-search",
     "filesystem":    "@modelcontextprotocol/server-filesystem",
 }
@@ -56,7 +57,11 @@ class ServerPool:
         """Start all servers declared in mcp-worker.yaml. Called at boot."""
         tools_out: list[dict] = []
         for sc in self._cfg.servers:
-            srv = await self._start_server_from_config(sc)
+            # In SaaS mode, use vault credentials for known managed integrations
+            if saas_client.is_saas_mode() and sc.name in _MANAGED_PACKAGES:
+                srv = await self._start_managed_server(sc.name)
+            else:
+                srv = await self._start_server_from_config(sc)
             if srv:
                 tools_out.extend(srv.tools)
         return tools_out

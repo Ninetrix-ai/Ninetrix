@@ -37,30 +37,38 @@ class MCPServer:
         )
 
         self._stdio_cm = stdio_client(params)
-        read, write = await self._stdio_cm.__aenter__()
+        try:
+            read, write = await self._stdio_cm.__aenter__()
+        except Exception:
+            self._stdio_cm = None
+            raise
 
-        self._session_cm = ClientSession(read, write)
-        self.session = await self._session_cm.__aenter__()
-        await self.session.initialize()
+        try:
+            self._session_cm = ClientSession(read, write)
+            self.session = await self._session_cm.__aenter__()
+            await self.session.initialize()
 
-        resp = await self.session.list_tools()
-        for t in resp.tools:
-            schema: dict = {}
-            if hasattr(t, "inputSchema"):
-                if hasattr(t.inputSchema, "model_dump"):
-                    schema = t.inputSchema.model_dump()
-                elif isinstance(t.inputSchema, dict):
-                    schema = t.inputSchema
+            resp = await self.session.list_tools()
+            for t in resp.tools:
+                schema: dict = {}
+                if hasattr(t, "inputSchema"):
+                    if hasattr(t.inputSchema, "model_dump"):
+                        schema = t.inputSchema.model_dump()
+                    elif isinstance(t.inputSchema, dict):
+                        schema = t.inputSchema
 
-            self._tools.append(
-                {
-                    "name": f"{self.name}__{t.name}",
-                    "description": t.description or "",
-                    "inputSchema": schema,
-                }
-            )
+                self._tools.append(
+                    {
+                        "name": f"{self.name}__{t.name}",
+                        "description": t.description or "",
+                        "inputSchema": schema,
+                    }
+                )
 
-        logger.info("Started MCP server %r — %d tool(s)", self.name, len(self._tools))
+            logger.info("Started MCP server %r — %d tool(s)", self.name, len(self._tools))
+        except Exception:
+            await self.stop()
+            raise
 
     async def stop(self):
         for cm_attr in ("_session_cm", "_stdio_cm"):
