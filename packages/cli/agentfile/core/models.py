@@ -204,6 +204,9 @@ class AgentDef(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     execution: Optional[Execution] = None
     collaborators: list[str] = Field(default_factory=list)
+    routing_mode: Literal["agent", "auto"] = "agent"
+    routing_model: str = ""
+    routing_provider: str = ""
     resources: Resources = Field(default_factory=Resources)
     volume_refs: list[Union[str, VolumeSpec]] = Field(default_factory=list)
     serve: bool = False
@@ -328,6 +331,9 @@ def _parse_agent_def(key: str, araw: dict) -> AgentDef:
         constraints=list(meta.get("constraints") or []),
         execution=_parse_execution(araw["execution"]) if "execution" in araw else None,
         collaborators=list(araw.get("collaborators") or []),
+        routing_mode=str((araw.get("routing") or {}).get("mode", "agent")),
+        routing_model=str((araw.get("routing") or {}).get("model", "") or ""),
+        routing_provider=str((araw.get("routing") or {}).get("provider", "") or ""),
         resources=Resources(**(runtime.get("resources") or {})),
         volume_refs=volume_refs,
         serve=bool(araw.get("serve", False)),

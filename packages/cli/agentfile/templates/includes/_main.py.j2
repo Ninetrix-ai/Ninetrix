@@ -336,6 +336,14 @@ async def main() -> None:
                 if _saas_cp is not None:
                     _saas_cp.tokens_used += _thnk_in + _thnk_out
 {% endif %}
+{% if has_auto_routing %}
+                # Auto-routing: cheap LLM picks the collaborator, skip agentic loop
+                try:
+                    _route_result = await _auto_route(user_input, THREAD_ID or "")
+                    _console.print(_route_result, markup=False, highlight=False)
+                except Exception as _route_exc:
+                    print(f"[router] Failed: {_route_exc}", file=sys.stderr, flush=True)
+{% else %}
                 try:
                     await _run_turn(
 {% if has_planned_execution %}
@@ -393,6 +401,7 @@ async def main() -> None:
 {% endif %}
                 else:
                     pass
+{% endif %}{# has_auto_routing else #}
 
                 print()
 {% endif %}{# not is_multi_agent or has_any_triggers #}

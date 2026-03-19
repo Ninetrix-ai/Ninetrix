@@ -48,6 +48,9 @@ if _PYDANTIC_AVAILABLE:
         agent_name: str = ""
         collaborators: list = []
         has_collaborators: bool = False
+        has_auto_routing: bool = False
+        routing_model: str = ""
+        routing_provider: str = ""
         has_output_type: bool = False
         output_type_schema: str = ""
         max_tokens: int = 8192
@@ -152,6 +155,9 @@ def build_context(
     is_multi_agent    = af.is_multi_agent
     collaborators     = agent_def.collaborators
     has_collaborators = bool(collaborators)
+    has_auto_routing  = has_collaborators and agent_def.routing_mode == "auto"
+    routing_model     = agent_def.routing_model or "claude-haiku-4-5-20251001"
+    routing_provider  = agent_def.routing_provider or agent_def.provider
     volume_defs       = af.effective_volumes(agent_def)
     has_s3_volumes    = any(v.provider == "s3" for v in volume_defs)
     base_image        = agent_def.resources.base_image or "python:3.12-slim"
@@ -227,6 +233,9 @@ def build_context(
         "agent_name":                 agent_def.name,
         "collaborators":              collaborators,
         "has_collaborators":          has_collaborators,
+        "has_auto_routing":           has_auto_routing,
+        "routing_model":              routing_model,
+        "routing_provider":           routing_provider,
         "max_tokens":                 agent_def.max_tokens,
         "max_turns":                  agent_def.max_turns,
         "tool_timeout":               agent_def.tool_timeout,

@@ -36,6 +36,47 @@ async def _transfer_to_agent(
     return result
 
 
+{% if has_auto_routing %}
+async def _auto_route(message: str, thread_id: str) -> str:
+    """Use a cheap LLM call to pick the best collaborator, then forward the message."""
+    _agents_desc = "\n".join(
+        f"- {name}" for name in {{ collaborators | tojson }}
+    )
+    _route_prompt = (
+        f"You are a message router. Pick the single best agent to handle this message.\n\n"
+        f"Available agents:\n{_agents_desc}\n\n"
+        f"Message: {message}\n\n"
+        f"Respond with ONLY the agent name, nothing else."
+    )
+    try:
+        _route_model = "{{ routing_provider }}/{{ routing_model }}"
+        _route_resp = await litellm.acompletion(
+            model=_route_model,
+            messages=[{"role": "user", "content": _route_prompt}],
+            temperature=0.0,
+            max_tokens=32,
+        )
+        _picked = _route_resp.choices[0].message.content.strip().lower()
+        # Validate the pick
+        _valid = {n.lower(): n for n in {{ collaborators | tojson }}}
+        if _picked not in _valid:
+            # Fuzzy match: check if the response contains a valid name
+            for _k, _v in _valid.items():
+                if _k in _picked:
+                    _picked = _k
+                    break
+            else:
+                _picked = list(_valid.keys())[0]
+                print(f"[router] Could not parse route, defaulting to '{_picked}'", file=sys.stderr, flush=True)
+        _target = _valid[_picked]
+        print(f"[router] → {_target}", flush=True)
+        return await _transfer_to_agent(_target, message, {}, thread_id)
+    except Exception as _exc:
+        print(f"[router] Error: {_exc} — falling back to first collaborator", file=sys.stderr, flush=True)
+        return await _transfer_to_agent({{ collaborators | tojson }}[0], message, {}, thread_id)
+
+
+{% endif %}
 {% if collaborators | length >= 2 %}
 async def _transfer_parallel(transfers: list, thread_id: str) -> str:
     """Delegate tasks to multiple agents simultaneously and merge results."""
