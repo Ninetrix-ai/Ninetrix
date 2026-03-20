@@ -231,6 +231,14 @@ async def _run_turn(
                 except Exception as _le:
                     result_str = f"Tool error: {type(_le).__name__}: {_le}"
 {% endif %}
+{% if has_builtin_shell or has_builtin_filesystem %}
+            elif fn_name in _BUILTIN_TOOL_NAMES:
+                # Builtin tool (shell, filesystem)
+                try:
+                    result_str = _exec_builtin_tool(fn_name, fn_args)
+                except Exception as _be:
+                    result_str = f"Tool error: {type(_be).__name__}: {_be}"
+{% endif %}
             else:
                 result_str = f"Error: tool '{fn_name}' is not available."
 

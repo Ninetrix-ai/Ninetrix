@@ -72,6 +72,16 @@ class Tool(BaseModel):
     def is_local(self) -> bool:
         return self.source.startswith("./") or self.source.startswith("/")
 
+    def is_builtin(self) -> bool:
+        return self.source.startswith("builtin://")
+
+    @property
+    def builtin_name(self) -> Optional[str]:
+        """Return the builtin tool name after 'builtin://', e.g. 'shell'. None if not builtin."""
+        if not self.is_builtin():
+            return None
+        return self.source[len("builtin://"):]
+
     @property
     def mcp_name(self) -> Optional[str]:
         """Return the registry key after 'mcp://', e.g. 'brave-search'. None if not MCP."""
@@ -554,6 +564,7 @@ class AgentFile(BaseModel):
 
             if not agent.tools:
                 errors.append(f"{prefix}: at least one tool is required")
+            _valid_builtins = {"shell", "filesystem"}
             for i, tool in enumerate(agent.tools):
                 if not tool.name:
                     errors.append(f"{prefix}.tools[{i}].name is required")
@@ -563,6 +574,11 @@ class AgentFile(BaseModel):
                     errors.append(
                         f"{prefix}.tools[{i}].source: invalid composio:// URI — "
                         "app name is missing"
+                    )
+                if tool.is_builtin() and tool.builtin_name not in _valid_builtins:
+                    errors.append(
+                        f"{prefix}.tools[{i}].source: unknown builtin '{tool.builtin_name}' — "
+                        f"valid options: {', '.join(sorted(_valid_builtins))}"
                     )
 
             eff_exec = self.effective_execution(agent)

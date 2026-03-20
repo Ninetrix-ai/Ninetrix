@@ -105,6 +105,10 @@ async def main() -> None:
                 for _td in _local_tool_registry.all()
             ]
 {% endif %}
+{% if has_builtin_shell or has_builtin_filesystem %}
+            # Add builtin tool schemas (shell, filesystem)
+            all_tool_defs += _BUILTIN_TOOL_DEFS
+{% endif %}
 {% if has_collaborators %}
             # Inject transfer tools so the agent can delegate to collaborators
             all_tool_defs += [

@@ -143,8 +143,28 @@ async def _chat_handler(request: Request) -> JSONResponse:
     thread_id     = f"chat-{session_id}"
     _chat_trace   = "chat_" + session_id[:8]
 
-    # Restore in-memory context for this session (empty list = fresh conversation)
-    _prior_history: list = list(_chat_state["histories"].get(session_id, []))
+    # ── Restore session history (3-tier: in-memory → API checkpoint → empty) ──
+    _prior_history: list = []
+    if session_id in _chat_state["histories"]:
+        # Fast path: in-memory cache (survives across turns within same container)
+        _prior_history = list(_chat_state["histories"][session_id])
+    elif _SAAS_PERSIST:
+        # Slow path: load from API checkpoint (survives container restarts)
+        try:
+            _cp_loader = _SaaSCheckpointer(thread_id, _chat_trace)
+            _prior_cp = await _cp_loader.load_prior()
+            if _prior_cp:
+                _cp_data = _prior_cp.get("checkpoint", {})
+                if isinstance(_cp_data, str):
+                    import json as _json_mod
+                    _cp_data = _json_mod.loads(_cp_data)
+                _restored = _cp_data.get("history", [])
+                if _restored:
+                    _prior_history = [m for m in _restored if m.get("role") != "system"]
+                    _chat_state["histories"][session_id] = _prior_history
+                    print(f"[chat] Restored {len(_prior_history)} message(s) for session {session_id} from checkpoint", file=sys.stderr)
+        except Exception as _restore_exc:
+            print(f"[chat] Failed to restore session {session_id}: {_restore_exc}", file=sys.stderr)
     _messages_out:  list = []
 
     _post_runner_event("thread_started", {
@@ -156,6 +176,10 @@ async def _chat_handler(request: Request) -> JSONResponse:
     })
 
     result_collector: list = []
+    _saas_cp = _SaaSCheckpointer(thread_id, _chat_trace) if _SAAS_PERSIST else None
+    # Carry forward history_meta from prior turns so dashboard timeline stays accurate
+    if _saas_cp and _prior_history:
+        _saas_cp.history_meta = [{"ts": ""} for _ in _prior_history]
     try:
         await _run_turn(
             message,
@@ -167,11 +191,11 @@ async def _chat_handler(request: Request) -> JSONResponse:
 {% endif %}
             result_collector=result_collector,
             thread_id=thread_id,
-            saas_cp=_SaaSCheckpointer(thread_id, _chat_trace) if _SAAS_PERSIST else None,
+            saas_cp=_saas_cp,
             prior_messages=_prior_history,
             messages_out=_messages_out,
         )
-        # Persist updated history in-memory for next turn
+        # Persist updated history: in-memory (fast) + API checkpoint (durable)
         if _messages_out:
             _chat_state["histories"][session_id] = _messages_out
         response = "\n".join(result_collector) if result_collector else "(no response)"

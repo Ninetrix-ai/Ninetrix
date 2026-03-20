@@ -72,6 +72,8 @@ if _PYDANTIC_AVAILABLE:
         local_tool_files: list = []
         local_tool_manifests: list = []
         local_source_paths: list = []
+        has_builtin_shell: bool = False
+        has_builtin_filesystem: bool = False
 
 
 def build_context(
@@ -198,6 +200,11 @@ def build_context(
                 if _warn:
                     _warn(f"Local tool discovery failed: {_exc}")
 
+    # ── Builtin tools ────────────────────────────────────────────────────────────
+    _builtin_tools = [t for t in agent_def.tools if t.is_builtin()]
+    has_builtin_shell = any(t.builtin_name == "shell" for t in _builtin_tools)
+    has_builtin_filesystem = any(t.builtin_name == "filesystem" for t in _builtin_tools)
+
     import json as _json
     has_output_type = agent_def.output_type is not None
     output_type_schema = _json.dumps(agent_def.output_type) if has_output_type else ""
@@ -255,6 +262,8 @@ def build_context(
         "local_tool_files":           local_tool_files,
         "local_tool_manifests":       local_tool_manifests,
         "local_source_paths":         local_source_paths,
+        "has_builtin_shell":          has_builtin_shell,
+        "has_builtin_filesystem":     has_builtin_filesystem,
     }
     if _PYDANTIC_AVAILABLE:
         return TemplateContext(**result)

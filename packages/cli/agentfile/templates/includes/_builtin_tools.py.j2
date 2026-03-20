@@ -1,0 +1,200 @@
+{% if has_builtin_shell or has_builtin_filesystem %}
+# ── Builtin tools ─────────────────────────────────────────────────────────────
+import subprocess as _subprocess
+
+{% if has_builtin_shell %}
+def _builtin_shell_exec(command: str, timeout: int = 60, working_dir: str = "/app") -> str:
+    """Execute a shell command and return combined stdout + stderr."""
+    try:
+        result = _subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=working_dir,
+        )
+        output_parts = []
+        if result.stdout:
+            output_parts.append(result.stdout)
+        if result.stderr:
+            output_parts.append(f"[stderr] {result.stderr}")
+        output_parts.append(f"[exit_code: {result.returncode}]")
+        return "\n".join(output_parts).strip()
+    except _subprocess.TimeoutExpired:
+        return f"[error] Command timed out after {timeout}s"
+    except Exception as exc:
+        return f"[error] {type(exc).__name__}: {exc}"
+
+
+_BUILTIN_SHELL_TOOL_DEF = {
+    "type": "function",
+    "function": {
+        "name": "shell",
+        "description": (
+            "Execute a shell command inside the agent container. "
+            "You have full root access. Use this to run any CLI tool, "
+            "install packages (apt-get, pip), inspect the system, "
+            "process files, make HTTP requests (curl), or run scripts. "
+            "Commands run in /bin/sh. The working directory defaults to /app."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["command"],
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute (e.g. 'ls -la', 'apt-get install -y jq', 'curl https://api.example.com')"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Max seconds to wait for the command to complete (default: 60)",
+                    "default": 60
+                },
+                "working_dir": {
+                    "type": "string",
+                    "description": "Working directory for the command (default: /app)",
+                    "default": "/app"
+                }
+            }
+        }
+    }
+}
+{% endif %}
+
+{% if has_builtin_filesystem %}
+import os as _os
+
+def _builtin_read_file(path: str, offset: int = 0, limit: int = 5000) -> str:
+    """Read a file and return its contents."""
+    try:
+        with open(path, "r") as f:
+            lines = f.readlines()
+        selected = lines[offset:offset + limit]
+        numbered = [f"{offset + i + 1}: {line}" for i, line in enumerate(selected)]
+        result = "".join(numbered)
+        if len(lines) > offset + limit:
+            result += f"\n... ({len(lines) - offset - limit} more lines)"
+        return result
+    except Exception as exc:
+        return f"[error] {type(exc).__name__}: {exc}"
+
+
+def _builtin_write_file(path: str, content: str) -> str:
+    """Write content to a file, creating directories if needed."""
+    try:
+        _os.makedirs(_os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            f.write(content)
+        return f"Written {len(content)} bytes to {path}"
+    except Exception as exc:
+        return f"[error] {type(exc).__name__}: {exc}"
+
+
+def _builtin_list_dir(path: str = ".", recursive: bool = False) -> str:
+    """List directory contents."""
+    try:
+        if recursive:
+            entries = []
+            for root, dirs, files in _os.walk(path):
+                for name in dirs + files:
+                    entries.append(_os.path.join(root, name))
+            return "\n".join(sorted(entries)[:500])
+        else:
+            entries = sorted(_os.listdir(path))
+            return "\n".join(entries)
+    except Exception as exc:
+        return f"[error] {type(exc).__name__}: {exc}"
+
+
+_BUILTIN_READ_FILE_DEF = {
+    "type": "function",
+    "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file. Returns numbered lines.",
+        "parameters": {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+                "path": {"type": "string", "description": "Absolute or relative file path"},
+                "offset": {"type": "integer", "description": "Line number to start from (0-based, default: 0)", "default": 0},
+                "limit": {"type": "integer", "description": "Max lines to read (default: 5000)", "default": 5000}
+            }
+        }
+    }
+}
+
+_BUILTIN_WRITE_FILE_DEF = {
+    "type": "function",
+    "function": {
+        "name": "write_file",
+        "description": "Write content to a file. Creates parent directories if needed.",
+        "parameters": {
+            "type": "object",
+            "required": ["path", "content"],
+            "properties": {
+                "path": {"type": "string", "description": "File path to write to"},
+                "content": {"type": "string", "description": "Content to write"}
+            }
+        }
+    }
+}
+
+_BUILTIN_LIST_DIR_DEF = {
+    "type": "function",
+    "function": {
+        "name": "list_dir",
+        "description": "List files and directories at a path.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory path (default: current dir)", "default": "."},
+                "recursive": {"type": "boolean", "description": "Recursively list subdirectories (default: false)", "default": False}
+            }
+        }
+    }
+}
+{% endif %}
+
+# Collect all builtin tool definitions
+_BUILTIN_TOOL_DEFS: list[dict] = []
+_BUILTIN_TOOL_NAMES: set[str] = set()
+
+{% if has_builtin_shell %}
+_BUILTIN_TOOL_DEFS.append(_BUILTIN_SHELL_TOOL_DEF)
+_BUILTIN_TOOL_NAMES.add("shell")
+{% endif %}
+{% if has_builtin_filesystem %}
+_BUILTIN_TOOL_DEFS.extend([_BUILTIN_READ_FILE_DEF, _BUILTIN_WRITE_FILE_DEF, _BUILTIN_LIST_DIR_DEF])
+_BUILTIN_TOOL_NAMES.update({"read_file", "write_file", "list_dir"})
+{% endif %}
+
+
+def _exec_builtin_tool(fn_name: str, fn_args: dict) -> str:
+    """Dispatch a builtin tool call. Returns result string."""
+{% if has_builtin_shell %}
+    if fn_name == "shell":
+        return _builtin_shell_exec(
+            fn_args.get("command", ""),
+            timeout=int(fn_args.get("timeout", 60)),
+            working_dir=str(fn_args.get("working_dir", "/app")),
+        )
+{% endif %}
+{% if has_builtin_filesystem %}
+    if fn_name == "read_file":
+        return _builtin_read_file(
+            fn_args.get("path", ""),
+            offset=int(fn_args.get("offset", 0)),
+            limit=int(fn_args.get("limit", 5000)),
+        )
+    if fn_name == "write_file":
+        return _builtin_write_file(fn_args.get("path", ""), fn_args.get("content", ""))
+    if fn_name == "list_dir":
+        return _builtin_list_dir(
+            fn_args.get("path", "."),
+            recursive=bool(fn_args.get("recursive", False)),
+        )
+{% endif %}
+    return f"Error: unknown builtin tool '{fn_name}'"
+
+{% endif %}
