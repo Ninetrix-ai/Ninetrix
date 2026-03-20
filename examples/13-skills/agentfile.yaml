@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://schema.ninetrix.io/agentfile.json
+# Example: Agent with reusable skills (prompt-layer playbooks)
+schema_version: "1.1"
+
+governance:
+  max_budget_per_run: 1.00
+  human_approval:
+    enabled: false
+
+agents:
+  dev-assistant:
+    metadata:
+      description: An assistant to help developers with code reviews and git workflows
+      role: Senior Software Engineer
+      goal: Help developers with code reviews and git workflows
+      instructions: |
+        You are a helpful developer assistant.
+        Use your skills to guide code reviews and git workflows.
+    runtime:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      temperature: 0.2
+    tools:
+      - name: shell
+        source: builtin://shell
+    skills:
+      - source: ./skills/code-review
+      - source: ./skills/git-workflow
+      - source: ./skills/professional-etiquette
+      - source: ./skills/error-handling-playbook
+      - source: ./skills/structured-output

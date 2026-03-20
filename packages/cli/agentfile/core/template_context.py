@@ -74,6 +74,9 @@ if _PYDANTIC_AVAILABLE:
         local_source_paths: list = []
         has_builtin_shell: bool = False
         has_builtin_filesystem: bool = False
+        has_skills: bool = False
+        skill_instructions: str = ""
+        skill_source_paths: list = []
 
 
 def build_context(
@@ -205,6 +208,23 @@ def build_context(
     has_builtin_shell = any(t.builtin_name == "shell" for t in _builtin_tools)
     has_builtin_filesystem = any(t.builtin_name == "filesystem" for t in _builtin_tools)
 
+    # ── Skill discovery ──────────────────────────────────────────────────────
+    has_skills = False
+    skill_instructions_parts: list[str] = []
+    skill_source_paths: list[str] = []
+
+    if agentfile_dir is not None:
+        for _s in agent_def.skills:
+            if _s.is_local():
+                _skill_dir = (Path(agentfile_dir) / _s.source).resolve()
+                _inst = _skill_dir / "instructions.md"
+                if _inst.exists():
+                    skill_instructions_parts.append(_inst.read_text().strip())
+                    skill_source_paths.append(str(_skill_dir))
+                elif _warn:
+                    _warn(f"Skill '{_s.source}': instructions.md not found at {_skill_dir}")
+        has_skills = bool(skill_instructions_parts)
+
     import json as _json
     has_output_type = agent_def.output_type is not None
     output_type_schema = _json.dumps(agent_def.output_type) if has_output_type else ""
@@ -264,6 +284,9 @@ def build_context(
         "local_source_paths":         local_source_paths,
         "has_builtin_shell":          has_builtin_shell,
         "has_builtin_filesystem":     has_builtin_filesystem,
+        "has_skills":                 has_skills,
+        "skill_instructions":         "\n\n---\n\n".join(skill_instructions_parts),
+        "skill_source_paths":         skill_source_paths,
     }
     if _PYDANTIC_AVAILABLE:
         return TemplateContext(**result)

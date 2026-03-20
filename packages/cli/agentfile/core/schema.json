@@ -195,6 +195,30 @@
             }
           },
 
+          "skills": {
+            "type": "array",
+            "description": "Reusable prompt-layer playbooks. Each skill is a directory with skill.yaml + instructions.md, injected into the system prompt at build time.",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "Shorthand source path (e.g. './skills/support-triage')"
+                },
+                {
+                  "type": "object",
+                  "required": ["source"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "description": "Path to skill directory or hub:// reference"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+
           "governance": {
             "type": "object",
             "description": "Per-agent governance override — takes precedence over global governance settings.",

@@ -1,0 +1,7 @@
+name: code-review
+version: 1.0.0
+description: Systematic code review playbook
+author: ninetrix
+requires:
+  tools:
+    - builtin://shell

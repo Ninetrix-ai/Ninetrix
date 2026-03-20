@@ -97,6 +97,17 @@ class Tool(BaseModel):
         return self.source[len("composio://"):]
 
 
+class Skill(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    source: str
+
+    def is_local(self) -> bool:
+        return self.source.startswith("./") or self.source.startswith("/")
+
+    def is_hub(self) -> bool:
+        return self.source.startswith("hub://")
+
+
 class HumanApproval(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -206,6 +217,7 @@ class AgentDef(BaseModel):
     history_window_tokens: int = 90_000
     output_type: Optional[dict[str, Any]] = None
     tools: list[Tool] = Field(default_factory=list)
+    skills: list[Skill] = Field(default_factory=list)
     governance: Optional[Governance] = None
     triggers: list[Trigger] = Field(default_factory=list)
     role: str = ""
@@ -339,6 +351,7 @@ def _parse_agent_def(key: str, araw: dict) -> AgentDef:
         history_window_tokens=int(runtime.get("history_window_tokens", 90_000)),
         output_type=araw.get("output_type"),
         tools=[Tool(**t) for t in (araw.get("tools") or [])],
+        skills=[Skill(**s) if isinstance(s, dict) else Skill(source=s) for s in (araw.get("skills") or [])],
         governance=_parse_governance(araw["governance"]) if araw.get("governance") else None,
         triggers=[Trigger(**t) for t in (araw.get("triggers") or [])],
         role=str(meta.get("role", "") or ""),
@@ -580,6 +593,10 @@ class AgentFile(BaseModel):
                         f"{prefix}.tools[{i}].source: unknown builtin '{tool.builtin_name}' — "
                         f"valid options: {', '.join(sorted(_valid_builtins))}"
                     )
+
+            for i, skill in enumerate(agent.skills):
+                if skill.is_hub():
+                    errors.append(f"{prefix}.skills[{i}]: hub:// skills are not yet supported")
 
             eff_exec = self.effective_execution(agent)
             if eff_exec.mode not in ("direct", "planned"):

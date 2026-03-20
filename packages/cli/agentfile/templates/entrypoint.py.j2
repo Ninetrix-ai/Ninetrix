@@ -120,6 +120,11 @@ def _validate_output(text: str) -> dict:
         raise ValueError(f"Missing required fields: {missing}")
     return parsed
 {% endif %}
+{% if has_skills %}
+# ── Skill instructions ───────────────────────────────────────────────────────
+_SKILL_INSTRUCTIONS = {{ skill_instructions | tojson }}
+SYSTEM_PROMPT = (SYSTEM_PROMPT + "\n\n" + _SKILL_INSTRUCTIONS) if SYSTEM_PROMPT else _SKILL_INSTRUCTIONS
+{% endif %}
 
 # ── Durable run identity ──────────────────────────────────────────────────────
 # THREAD_ID is stable across restarts (injected by `ninetrix run/up` when
@@ -220,7 +225,7 @@ from ninetrix.registry import _registry as _local_tool_registry
 _load_local_tools({{ local_tool_files | tojson }})
 {% endif %}
 
-{% include '_builtin_tools.py.j2' %}
+{% include 'includes/_builtin_tools.py.j2' %}
 
 _console = Console()
 
