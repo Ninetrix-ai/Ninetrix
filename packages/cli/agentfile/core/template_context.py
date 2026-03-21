@@ -76,8 +76,12 @@ if _PYDANTIC_AVAILABLE:
         local_source_paths: list = []
         has_builtin_shell: bool = False
         has_builtin_filesystem: bool = False
-        packages: list = []
-        has_packages: bool = False
+        apt_packages: list = []
+        npm_packages: list = []
+        pip_packages: list = []
+        has_apt_packages: bool = False
+        has_npm_packages: bool = False
+        has_pip_packages: bool = False
         has_skills: bool = False
         skill_instructions: str = ""
         skill_source_paths: list = []
@@ -440,8 +444,12 @@ def build_context(
         "local_source_paths":         local_source_paths,
         "has_builtin_shell":          has_builtin_shell,
         "has_builtin_filesystem":     has_builtin_filesystem,
-        "packages":                   agent_def.packages,
-        "has_packages":               bool(agent_def.packages),
+        "apt_packages":               [p for p in agent_def.packages if ":" not in p],
+        "npm_packages":               [p[4:] for p in agent_def.packages if p.startswith("npm:")],
+        "pip_packages":               [p[4:] for p in agent_def.packages if p.startswith("pip:")],
+        "has_apt_packages":           any(":" not in p for p in agent_def.packages),
+        "has_npm_packages":           any(p.startswith("npm:") for p in agent_def.packages),
+        "has_pip_packages":           any(p.startswith("pip:") for p in agent_def.packages),
         "has_skills":                 has_skills,
         "skill_instructions":         "\n\n---\n\n".join(skill_instructions_parts),
         "skill_source_paths":         skill_source_paths,

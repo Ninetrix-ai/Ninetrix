@@ -197,7 +197,7 @@
 
           "packages": {
             "type": "array",
-            "description": "System packages to install in the agent container via apt-get. Use standard Debian/Ubuntu package names. Example: [\"git\", \"curl\", \"ffmpeg\", \"chromium\"].",
+            "description": "Packages to install in the agent container. No prefix = apt-get, 'npm:' = npm install -g, 'pip:' = pip install. Example: [\"git\", \"nodejs\", \"npm:agent-browser\", \"pip:pandas\"].",
             "items": {
               "type": "string"
             }

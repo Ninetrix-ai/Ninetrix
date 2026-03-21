@@ -84,100 +84,104 @@ def _client() -> docker.DockerClient:
 
 
 def build_image(context_dir: Path, image_name: str, tag: str = "latest") -> str:
-    """Build a Docker image from context_dir. Returns the full image tag."""
-    import json
+    """Build a Docker image via `docker buildx build` (BuildKit).
+
+    Uses subprocess so BuildKit cache mounts work and output streams in
+    real-time.  Returns the full image tag.
+    """
     import re
+    import threading
     import time
 
-    client = _client()
     full_tag = f"{image_name}:{tag}" if ":" not in image_name else image_name
 
     console.print(f"  Building [bold]{full_tag}[/bold]")
-    build_log: list[str] = []
     start_time = time.monotonic()
 
-    # Use the low-level API so we get a *streaming* generator immediately.
-    # client.images.build() blocks until the entire build finishes.
-    step_re = re.compile(r"^Step\s+(\d+)/(\d+)\s*:\s*(.+)")
-    error_detail: str | None = None
+    # BuildKit progress line: "#6 [3/8] RUN pip install ..."
+    step_re = re.compile(r"#\d+\s+\[(?:\w+\s+)?(\d+)/(\d+)\]\s+(.+)")
 
-    try:
-        stream = client.api.build(
-            path=str(context_dir),
-            tag=full_tag,
-            rm=True,
-            forcerm=True,
-            decode=True,
-        )
-        # Use a Live display with a background timer thread so the elapsed
-        # time updates every second, even while Docker is blocked on a step.
-        import threading
-        from rich.text import Text
+    cmd = [
+        "docker", "buildx", "build",
+        "--tag", full_tag,
+        "--load",              # load into local docker images
+        "--progress=plain",    # machine-readable output
+        str(context_dir),
+    ]
 
-        current_label = "  [dim]Starting build…[/dim]"
-        stop_timer = threading.Event()
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,             # line-buffered
+        text=True,
+        env={**os.environ, "DOCKER_BUILDKIT": "1"},
+    )
 
-        def _timer_loop(live_obj):
-            while not stop_timer.wait(1.0):
-                elapsed = time.monotonic() - start_time
-                live_obj.update(
-                    Text.from_markup(f"{current_label}  [dim]({elapsed:.0f}s)[/dim]")
-                )
+    from rich.live import Live
+    from rich.text import Text
 
-        from rich.live import Live
-        from rich.spinner import Spinner
+    build_log: list[str] = []
+    current_label = "  [dim]Starting build…[/dim]"
+    stop_timer = threading.Event()
 
-        with Live(
-            Spinner("dots", text=Text.from_markup(current_label)),
-            console=console,
-            refresh_per_second=4,
-        ) as live:
-            timer_thread = threading.Thread(target=_timer_loop, args=(live,), daemon=True)
-            timer_thread.start()
-            for chunk in stream:
-                if "error" in chunk:
-                    error_detail = chunk["error"].strip()
-                    break
+    def _timer_loop(live_obj):
+        while not stop_timer.wait(1.0):
+            elapsed = time.monotonic() - start_time
+            live_obj.update(
+                Text.from_markup(f"{current_label}  [dim]({elapsed:.0f}s)[/dim]")
+            )
 
-                line = chunk.get("stream", "").rstrip()
-                if line:
-                    build_log.append(line)
-                    m = step_re.match(line)
-                    if m:
-                        step_num, total, instruction = m.group(1), m.group(2), m.group(3)
-                        label = instruction.strip()
-                        if len(label) > 60:
-                            label = label[:57] + "…"
-                        current_label = f"  [dim]Step {step_num}/{total}:[/dim] {label}"
-                        elapsed = time.monotonic() - start_time
-                        live.update(
-                            Text.from_markup(f"{current_label}  [dim]({elapsed:.0f}s)[/dim]")
-                        )
-            stop_timer.set()
+    with Live(
+        Text.from_markup(current_label),
+        console=console,
+        refresh_per_second=4,
+    ) as live:
+        timer_thread = threading.Thread(target=_timer_loop, args=(live,), daemon=True)
+        timer_thread.start()
+        while True:
+            raw_line = proc.stdout.readline()
+            if not raw_line and proc.poll() is not None:
+                break
+            line = raw_line.rstrip()
+            if line:
+                build_log.append(line)
+                m = step_re.search(line)
+                if m:
+                    step_num, total, instruction = m.group(1), m.group(2), m.group(3)
+                    label = instruction.strip()
+                    if len(label) > 60:
+                        label = label[:57] + "…"
+                    current_label = f"  [dim]Step {step_num}/{total}:[/dim] {label}"
+                    elapsed = time.monotonic() - start_time
+                    live.update(
+                        Text.from_markup(f"{current_label}  [dim]({elapsed:.0f}s)[/dim]")
+                    )
+        stop_timer.set()
 
-        if error_detail:
-            build_log.append(error_detail)
-            raise DockerException(error_detail)
+    rc = proc.wait()
+    elapsed = time.monotonic() - start_time
 
-        elapsed = time.monotonic() - start_time
+    if rc == 0:
         console.print(f"  [green]✓[/green] Image built: [bold]{full_tag}[/bold] [dim]({elapsed:.0f}s)[/dim]")
         return full_tag
-    except DockerException as exc:
-        log_lines = build_log
-        full_output = "\n".join(log_lines)
 
-        # Try to extract specific package errors from the build log
-        apt_matches = re.findall(r"Unable to locate package\s+(\S+)", full_output)
-        npm_matches = re.findall(r"npm error 404\s.*'([^']+)'", full_output)
-        pip_matches = re.findall(r"No matching distribution found for\s+(\S+)", full_output)
+    # Build failed — try to extract useful error info
+    full_output = "\n".join(build_log)
+    apt_matches = re.findall(r"Unable to locate package\s+(\S+)", full_output)
+    npm_matches = re.findall(r"npm error 404\s.*'([^']+)'", full_output)
+    pip_matches = re.findall(r"No matching distribution found for\s+(\S+)", full_output)
 
-        if apt_matches or npm_matches or pip_matches:
-            all_bad = apt_matches + npm_matches + pip_matches
-            console.print(f"\n  [red]✗[/red] Package not found: [bold]{', '.join(all_bad)}[/bold]")
-            console.print(f"    [dim]Hint: Check the spelling in your agentfile.yaml 'packages' list.[/dim]")
-        else:
-            console.print(f"\n  [red]✗[/red] Build failed: {exc}")
-        sys.exit(1)
+    if apt_matches or npm_matches or pip_matches:
+        all_bad = apt_matches + npm_matches + pip_matches
+        console.print(f"\n  [red]✗[/red] Package not found: [bold]{', '.join(all_bad)}[/bold]")
+        console.print(f"    [dim]Hint: Check the spelling in your agentfile.yaml 'packages' list.[/dim]")
+    else:
+        # Show last few meaningful lines from the build log
+        error_lines = [l for l in build_log[-20:] if "ERROR" in l or "error" in l.lower()]
+        msg = error_lines[-1] if error_lines else "see output above"
+        console.print(f"\n  [red]✗[/red] Build failed: {msg}")
+    sys.exit(1)
 
 
 def run_container(

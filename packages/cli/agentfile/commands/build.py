@@ -106,7 +106,10 @@ def _build_one(
                         line = re.sub(r"\x1b\[[0-9;]*m", "", line)
                         lines.append(line)
             full_output = "\n".join(lines)
-            pkg_matches = re.findall(r"Unable to locate package\s+(\S+)", full_output)
+            apt_matches = re.findall(r"Unable to locate package\s+(\S+)", full_output)
+            npm_matches = re.findall(r"npm error 404\s.*'([^']+)'", full_output)
+            pip_matches = re.findall(r"No matching distribution found for\s+(\S+)", full_output)
+            pkg_matches = apt_matches + npm_matches + pip_matches
             if pkg_matches:
                 error_msg = (
                     f"Package not found: {', '.join(pkg_matches)}. "
