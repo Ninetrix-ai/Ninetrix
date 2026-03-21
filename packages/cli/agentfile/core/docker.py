@@ -85,42 +85,95 @@ def _client() -> docker.DockerClient:
 
 def build_image(context_dir: Path, image_name: str, tag: str = "latest") -> str:
     """Build a Docker image from context_dir. Returns the full image tag."""
+    import json
     import re
+    import time
 
     client = _client()
     full_tag = f"{image_name}:{tag}" if ":" not in image_name else image_name
 
-    console.print(f"  Building [bold]{full_tag}[/bold] …")
+    console.print(f"  Building [bold]{full_tag}[/bold]")
     build_log: list[str] = []
+    start_time = time.monotonic()
+
+    # Use the low-level API so we get a *streaming* generator immediately.
+    # client.images.build() blocks until the entire build finishes.
+    step_re = re.compile(r"^Step\s+(\d+)/(\d+)\s*:\s*(.+)")
+    error_detail: str | None = None
+
     try:
-        _image, logs = client.images.build(
+        stream = client.api.build(
             path=str(context_dir),
             tag=full_tag,
             rm=True,
             forcerm=True,
+            decode=True,
         )
-        for chunk in logs:
-            line = chunk.get("stream", "").rstrip()
-            if line:
-                build_log.append(line)
-                console.print(f"    [dim]{line}[/dim]")
-        console.print(f"  [green]✓[/green] Image built: [bold]{full_tag}[/bold]")
+        # Use a Live display with a background timer thread so the elapsed
+        # time updates every second, even while Docker is blocked on a step.
+        import threading
+        from rich.text import Text
+
+        current_label = "  [dim]Starting build…[/dim]"
+        stop_timer = threading.Event()
+
+        def _timer_loop(live_obj):
+            while not stop_timer.wait(1.0):
+                elapsed = time.monotonic() - start_time
+                live_obj.update(
+                    Text.from_markup(f"{current_label}  [dim]({elapsed:.0f}s)[/dim]")
+                )
+
+        from rich.live import Live
+        from rich.spinner import Spinner
+
+        with Live(
+            Spinner("dots", text=Text.from_markup(current_label)),
+            console=console,
+            refresh_per_second=4,
+        ) as live:
+            timer_thread = threading.Thread(target=_timer_loop, args=(live,), daemon=True)
+            timer_thread.start()
+            for chunk in stream:
+                if "error" in chunk:
+                    error_detail = chunk["error"].strip()
+                    break
+
+                line = chunk.get("stream", "").rstrip()
+                if line:
+                    build_log.append(line)
+                    m = step_re.match(line)
+                    if m:
+                        step_num, total, instruction = m.group(1), m.group(2), m.group(3)
+                        label = instruction.strip()
+                        if len(label) > 60:
+                            label = label[:57] + "…"
+                        current_label = f"  [dim]Step {step_num}/{total}:[/dim] {label}"
+                        elapsed = time.monotonic() - start_time
+                        live.update(
+                            Text.from_markup(f"{current_label}  [dim]({elapsed:.0f}s)[/dim]")
+                        )
+            stop_timer.set()
+
+        if error_detail:
+            build_log.append(error_detail)
+            raise DockerException(error_detail)
+
+        elapsed = time.monotonic() - start_time
+        console.print(f"  [green]✓[/green] Image built: [bold]{full_tag}[/bold] [dim]({elapsed:.0f}s)[/dim]")
         return full_tag
     except DockerException as exc:
-        # BuildError has a build_log attribute with the full Docker output
         log_lines = build_log
-        if hasattr(exc, "build_log"):
-            for entry in exc.build_log:
-                line = (entry.get("stream") or entry.get("error") or "").strip()
-                if line:
-                    # Strip ANSI color codes
-                    line = re.sub(r"\x1b\[[0-9;]*m", "", line)
-                    log_lines.append(line)
-
         full_output = "\n".join(log_lines)
-        pkg_matches = re.findall(r"Unable to locate package\s+(\S+)", full_output)
-        if pkg_matches:
-            console.print(f"\n  [red]✗[/red] Package not found: [bold]{', '.join(pkg_matches)}[/bold]")
+
+        # Try to extract specific package errors from the build log
+        apt_matches = re.findall(r"Unable to locate package\s+(\S+)", full_output)
+        npm_matches = re.findall(r"npm error 404\s.*'([^']+)'", full_output)
+        pip_matches = re.findall(r"No matching distribution found for\s+(\S+)", full_output)
+
+        if apt_matches or npm_matches or pip_matches:
+            all_bad = apt_matches + npm_matches + pip_matches
+            console.print(f"\n  [red]✗[/red] Package not found: [bold]{', '.join(all_bad)}[/bold]")
             console.print(f"    [dim]Hint: Check the spelling in your agentfile.yaml 'packages' list.[/dim]")
         else:
             console.print(f"\n  [red]✗[/red] Build failed: {exc}")
@@ -195,18 +248,26 @@ def run_container(
 
 def push_image(image_name: str) -> None:
     """Push image to a registry (uses existing `docker login` credentials)."""
+    import time
+
     client = _client()
-    console.print(f"  Pushing [bold]{image_name}[/bold] …")
+    console.print(f"  Pushing [bold]{image_name}[/bold]")
+    start_time = time.monotonic()
     try:
-        for chunk in client.images.push(image_name, stream=True, decode=True):
-            status = chunk.get("status", "")
-            progress = chunk.get("progressDetail", {})
-            if "error" in chunk:
-                console.print(f"[red]Push error:[/red] {chunk['error']}")
-                sys.exit(1)
-            if status and not progress:
-                console.print(f"    [dim]{status}[/dim]")
-        console.print(f"  [green]✓[/green] Pushed: [bold]{image_name}[/bold]")
+        with console.status("  [dim]Uploading layers…[/dim]", spinner="dots") as spinner:
+            for chunk in client.images.push(image_name, stream=True, decode=True):
+                status = chunk.get("status", "")
+                progress = chunk.get("progressDetail", {})
+                if "error" in chunk:
+                    console.print(f"[red]Push error:[/red] {chunk['error']}")
+                    sys.exit(1)
+                if status:
+                    layer_id = chunk.get("id", "")
+                    label = f"  [dim]{layer_id}: {status}[/dim]" if layer_id else f"  [dim]{status}[/dim]"
+                    elapsed = time.monotonic() - start_time
+                    spinner.update(f"{label}  [dim]({elapsed:.0f}s)[/dim]")
+        elapsed = time.monotonic() - start_time
+        console.print(f"  [green]✓[/green] Pushed: [bold]{image_name}[/bold] [dim]({elapsed:.0f}s)[/dim]")
     except DockerException as exc:
         console.print(f"[red]Push failed:[/red] {exc}")
         sys.exit(1)
