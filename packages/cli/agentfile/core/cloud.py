@@ -109,8 +109,21 @@ class CloudClient:
         # Fallback: API token — try /tokens to verify it's valid
         resp2 = self._request("GET", "/tokens")
         if resp2.status_code == 200:
-            # API tokens don't have user context but are org-scoped
-            return WhoAmI(email="(API token)")
+            # API tokens are org-scoped — resolve org slug from agents list
+            org_slug = None
+            org_id = None
+            try:
+                agents = self.list_agents()
+                if agents:
+                    org_id = agents[0].get("org_id")
+                if org_id:
+                    org_resp = self._request("GET", f"/orgs/{org_id}")
+                    if org_resp.status_code == 200:
+                        org_data = org_resp.json()
+                        org_slug = org_data.get("slug")
+            except Exception:
+                pass
+            return WhoAmI(email="(API token)", org_slug=org_slug, org_id=org_id)
 
         if resp.status_code == 401 or resp2.status_code == 401:
             return WhoAmI()  # invalid token

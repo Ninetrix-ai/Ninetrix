@@ -205,8 +205,9 @@ def build_context(
 
     # ── Builtin tools ────────────────────────────────────────────────────────────
     _builtin_tools = [t for t in agent_def.tools if t.is_builtin()]
-    has_builtin_shell = any(t.builtin_name == "shell" for t in _builtin_tools)
-    has_builtin_filesystem = any(t.builtin_name == "filesystem" for t in _builtin_tools)
+    _builtin_names = {t.builtin_name for t in _builtin_tools}
+    has_builtin_shell = "shell" in _builtin_names
+    has_builtin_filesystem = "filesystem" in _builtin_names
 
     # ── Skill discovery ──────────────────────────────────────────────────────
     has_skills = False

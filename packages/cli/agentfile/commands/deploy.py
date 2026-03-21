@@ -164,19 +164,28 @@ def deploy_cmd(
     results: list[DeployResult] = []
 
     for name, agent_def in agents_to_deploy.items():
-        if not json_output:
-            console.print(f"  [bold]⠋[/bold] Deploying [bold]{name}[/bold]…", end="")
-
         try:
-            result = client.deploy_agent(
-                agent_name=name,
-                yaml_content=yaml_content,
-                description=agent_def.description,
-                region=region,
-                cpus=int(cpus),
-                memory_mb=memory_mb,
-                env=extra_env,
-            )
+            if json_output:
+                result = client.deploy_agent(
+                    agent_name=name,
+                    yaml_content=yaml_content,
+                    description=agent_def.description,
+                    region=region,
+                    cpus=int(cpus),
+                    memory_mb=memory_mb,
+                    env=extra_env,
+                )
+            else:
+                with console.status(f"  Deploying [bold]{name}[/bold]…", spinner="dots"):
+                    result = client.deploy_agent(
+                        agent_name=name,
+                        yaml_content=yaml_content,
+                        description=agent_def.description,
+                        region=region,
+                        cpus=int(cpus),
+                        memory_mb=memory_mb,
+                        env=extra_env,
+                    )
 
             # Build URLs
             if identity.org_slug:
@@ -188,7 +197,7 @@ def deploy_cmd(
 
             if not json_output:
                 action_label = "created" if result.action == "created" else "updated"
-                console.print(f"\r  [green]✓[/green] {name} — {action_label}")
+                console.print(f"  [green]✓[/green] {name} — {action_label}")
 
         except httpx.HTTPStatusError as exc:
             error_detail = _extract_error(exc)
@@ -201,7 +210,7 @@ def deploy_cmd(
             )
             results.append(result)
             if not json_output:
-                console.print(f"\r  [red]✗[/red] {name} — {error_detail}")
+                console.print(f"  [red]✗[/red] {name} — {error_detail}")
 
     # ── 7. Wait for deployments to come online ───────────────────────────
     if wait and not json_output:
@@ -297,11 +306,14 @@ def _wait_for_results(client, results) -> None:
     if not pending:
         return
 
-    console.print(f"  [bold]⠋[/bold] Waiting for {len(pending)} deployment(s) to come online…")
-
     for r in pending:
         try:
-            final_status = client.wait_for_deployment(r.deployment_id, timeout=120)
+            with console.status(
+                f"  Waiting for [bold]{r.agent_name}[/bold] to come online…",
+                spinner="dots",
+            ):
+                final_status = client.wait_for_deployment(r.deployment_id, timeout=120)
+
             r.status = final_status
             if final_status == "running":
                 console.print(f"  [green]✓[/green] {r.agent_name} is live!")
@@ -328,13 +340,18 @@ def _print_summary(results) -> None:
 
         lines = [f"  [bold]{r.agent_name}[/bold]"]
         if r.url:
-            lines.append(f"  URL:       [bold]{r.url}[/bold]")
+            lines.append(f"  Chat:      [bold]{r.url}/chat[/bold]")
         if r.dashboard_url:
             lines.append(f"  Dashboard: [dim]{r.dashboard_url}[/dim]")
         status_color = "green" if r.status == "running" else "yellow"
         resource_info = f"{r.memory_mb} MB, {r.cpus} CPU"
         lines.append(f"  Status:    [{status_color}]{r.status}[/{status_color}] ({resource_info})")
-        lines.append(f"  Action:    {r.action}")
+        if r.url:
+            lines.append("")
+            lines.append("  [dim]Example:[/dim]")
+            lines.append(f'  [dim]  curl -X POST {r.url}/chat \\[/dim]')
+            lines.append(f'  [dim]    -H "X-API-Token: $NXT_TOKEN" \\[/dim]')
+            lines.append("  [dim]    -d '{\"message\": \"hello\"}'[/dim]")
 
         console.print(Panel(
             "\n".join(lines),

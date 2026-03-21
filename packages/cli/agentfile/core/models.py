@@ -577,7 +577,13 @@ class AgentFile(BaseModel):
 
             if not agent.tools:
                 errors.append(f"{prefix}: at least one tool is required")
-            _valid_builtins = {"shell", "filesystem"}
+            _implemented_builtins = {"shell", "filesystem"}
+            _known_builtins = _implemented_builtins | {
+                "edit_file", "glob", "search_in_files", "diff",
+                "python_eval", "process_manager",
+                "web_search", "web_fetch", "http_request",
+                "ask_user", "task_manager", "parallel",
+            }
             for i, tool in enumerate(agent.tools):
                 if not tool.name:
                     errors.append(f"{prefix}.tools[{i}].name is required")
@@ -588,10 +594,10 @@ class AgentFile(BaseModel):
                         f"{prefix}.tools[{i}].source: invalid composio:// URI — "
                         "app name is missing"
                     )
-                if tool.is_builtin() and tool.builtin_name not in _valid_builtins:
+                if tool.is_builtin() and tool.builtin_name not in _known_builtins:
                     errors.append(
                         f"{prefix}.tools[{i}].source: unknown builtin '{tool.builtin_name}' — "
-                        f"valid options: {', '.join(sorted(_valid_builtins))}"
+                        f"valid options: {', '.join(sorted(_known_builtins))}"
                     )
 
             for i, skill in enumerate(agent.skills):
