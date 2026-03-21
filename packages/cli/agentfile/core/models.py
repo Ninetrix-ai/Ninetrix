@@ -144,12 +144,14 @@ class Governance(BaseModel):
 class Trigger(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    type: Literal["webhook", "schedule"]
+    type: Literal["webhook", "schedule", "channel"]
     endpoint: Optional[str] = None
     cron: Optional[str] = None
     port: int = 9100
     message: str = ""
     target_agent: Optional[str] = None
+    channels: list[str] = []           # channel types: ["telegram", "whatsapp"]
+    session_mode: str = "per_chat"     # per_message | per_chat
 
 
 class Verifier(BaseModel):
@@ -256,7 +258,7 @@ class AgentDef(BaseModel):
         return f"ninetrix/{slug}:{tag}"
 
     def webhook_triggers(self) -> list[Trigger]:
-        return [t for t in self.triggers if t.type == "webhook"]
+        return [t for t in self.triggers if t.type in ("webhook", "channel")]
 
     def schedule_triggers(self) -> list[Trigger]:
         return [t for t in self.triggers if t.type == "schedule"]
@@ -650,6 +652,10 @@ class AgentFile(BaseModel):
                     errors.append(
                         f"{prefix}.triggers[{i}]: schedule trigger requires a 'cron' expression"
                     )
+                if trigger.type == "channel" and not trigger.channels:
+                    errors.append(
+                        f"{prefix}.triggers[{i}]: channel trigger requires a 'channels' list (e.g. ['telegram'])"
+                    )
 
         # Validate root-level triggers
         for i, trigger in enumerate(self.triggers):
@@ -657,6 +663,8 @@ class AgentFile(BaseModel):
                 errors.append(f"triggers[{i}]: webhook trigger requires an 'endpoint'")
             if trigger.type == "schedule" and not trigger.cron:
                 errors.append(f"triggers[{i}]: schedule trigger requires a 'cron' expression")
+            if trigger.type == "channel" and not trigger.channels:
+                errors.append(f"triggers[{i}]: channel trigger requires a 'channels' list (e.g. ['telegram'])")
             if trigger.target_agent and trigger.target_agent not in self.agents:
                 errors.append(
                     f"triggers[{i}].target_agent '{trigger.target_agent}' "

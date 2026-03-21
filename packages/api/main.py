@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ninetrix_api import db
 from ninetrix_api.auth import init_machine_secret
-from ninetrix_api.routers import agents, approvals, integrations, runners, threads, tokens
+from ninetrix_api.routers import agents, approvals, channels, integrations, runners, threads, tokens
 
 
 @asynccontextmanager
@@ -29,7 +29,12 @@ async def lifespan(app: FastAPI):
     await db.create_runner_events_table()
     await db.create_integration_tables()
     init_machine_secret()
+    # Start channel polling (Telegram getUpdates) — no tunnel needed for local dev
+    from ninetrix_channels.polling import ChannelPoller
+    poller = ChannelPoller(db.pool(), channels.handle_polled_message)
+    await poller.start()
     yield
+    await poller.stop()
     await db.close()
 
 
@@ -54,6 +59,8 @@ app.include_router(integrations.router, prefix="/integrations", tags=["integrati
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
 app.include_router(runners.router, prefix="/v1/runners", tags=["runners"])
 app.include_router(runners.router, prefix="/internal/v1/runners", tags=["runners"])
+app.include_router(channels.router, prefix="/v1/channels", tags=["channels"])
+app.include_router(channels.webhook_router, prefix="/v1/channels", tags=["channels-webhook"])
 
 
 @app.get("/health")

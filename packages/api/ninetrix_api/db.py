@@ -247,6 +247,56 @@ async def create_runner_events_table() -> None:
         CREATE INDEX IF NOT EXISTS runner_events_thread_id_idx
         ON runner_events (thread_id)
     """)
+    # Lightweight heartbeat table — one row per agent, updated every 15s
+    await pool().execute("""
+        CREATE TABLE IF NOT EXISTS agent_heartbeats (
+            agent_id   TEXT PRIMARY KEY,
+            last_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    # Inbound messaging channels (Telegram, WhatsApp, etc.)
+    await pool().execute("""
+        CREATE TABLE IF NOT EXISTS channels (
+            id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            channel_type    TEXT        NOT NULL,
+            name            TEXT        NOT NULL,
+            config          JSONB       NOT NULL DEFAULT '{}',
+            session_mode    TEXT        NOT NULL DEFAULT 'per_chat',
+            routing_mode    TEXT        NOT NULL DEFAULT 'single',
+            verified        BOOLEAN     NOT NULL DEFAULT FALSE,
+            enabled         BOOLEAN     NOT NULL DEFAULT TRUE,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    await pool().execute("""
+        CREATE TABLE IF NOT EXISTS channel_agent_bindings (
+            id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            channel_id      UUID        NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            agent_name      TEXT        NOT NULL,
+            is_default      BOOLEAN     NOT NULL DEFAULT FALSE,
+            command         TEXT,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (channel_id, agent_name)
+        )
+    """)
+    await pool().execute("""
+        CREATE TABLE IF NOT EXISTS channel_sessions (
+            id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            channel_id        UUID        NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            external_chat_id  TEXT        NOT NULL,
+            external_user_id  TEXT,
+            agent_name        TEXT        NOT NULL,
+            thread_id         TEXT        NOT NULL,
+            last_message_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (channel_id, external_chat_id, agent_name)
+        )
+    """)
+    await pool().execute("""
+        CREATE INDEX IF NOT EXISTS idx_channel_sessions_lookup
+            ON channel_sessions(channel_id, external_chat_id)
+    """)
 
 
 async def create_integration_tables() -> None:

@@ -34,6 +34,7 @@ from agentfile.commands.ls import ls_cmd
 from agentfile.commands.connect import connect_cmd, disconnect_cmd, connections_cmd
 from agentfile.commands.migrate import migrate_cmd
 from agentfile.commands.schema import schema_cmd
+from agentfile.commands.channel import channel_cmd
 
 console = Console()
 
@@ -98,6 +99,12 @@ def cli(ctx: click.Context) -> None:
       ninetrix dev           start local server (API + MCP gateway + dashboard)
 
     \b
+    Channels:
+      ninetrix channel connect telegram   connect a Telegram bot interactively
+      ninetrix channel disconnect telegram remove Telegram connection
+      ninetrix channel status              show connected channels
+
+    \b
     Integrations (Ninetrix Cloud):
       ninetrix connections   list available integrations and connected status
       ninetrix connect       authorize an integration via OAuth (e.g. github, slack)
@@ -147,6 +154,7 @@ cli.add_command(connect_cmd,     name="connect")
 cli.add_command(disconnect_cmd,  name="disconnect")
 cli.add_command(migrate_cmd,     name="migrate")
 cli.add_command(schema_cmd,      name="schema")
+cli.add_command(channel_cmd,     name="channel")
 
 
 def main() -> None:

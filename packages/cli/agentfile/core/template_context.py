@@ -287,7 +287,7 @@ def build_context(
     has_any_triggers      = has_webhook_triggers or has_schedule_triggers
 
     webhook_trigger_defs  = [
-        {"endpoint": t.endpoint, "port": t.port}
+        {"endpoint": t.endpoint or "/run", "port": t.port}
         for t in agent.webhook_triggers()
     ]
     schedule_trigger_defs = [

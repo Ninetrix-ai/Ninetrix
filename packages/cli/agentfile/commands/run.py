@@ -358,7 +358,28 @@ def run_cmd(agentfile_path: str, image: str | None, tag: str, extra_env: tuple[s
 
     # Effective triggers for the entry agent
     eff_triggers = af.effective_triggers(agent)
-    webhook_triggers = [t for t in eff_triggers if t.type == "webhook"]
+
+    # Auto-prompt channel setup if agentfile has channel triggers
+    channel_triggers = [t for t in eff_triggers if t.type == "channel"]
+    if channel_triggers:
+        from agentfile.core.channel_config import is_verified, get_channel as _get_ch_cfg
+        from agentfile.commands.channel import setup_telegram_interactive
+        for ct in channel_triggers:
+            for ch_type in ct.channels:
+                if ch_type == "telegram":
+                    if not is_verified("telegram"):
+                        console.print(
+                            f"  [yellow]📱 Telegram channel detected but not configured.[/yellow]\n"
+                        )
+                        ok = setup_telegram_interactive(agent_name=agent.name)
+                        if not ok:
+                            console.print("  [dim]Skipping Telegram setup. Run later:[/dim] [bold]ninetrix channel connect telegram[/bold]\n")
+                    else:
+                        _tg = _get_ch_cfg("telegram")
+                        _bot = _tg.get("bot_username", "?") if _tg else "?"
+                        console.print(f"  [green]✓[/green] Telegram connected: [bold]@{_bot}[/bold]\n")
+
+    webhook_triggers = [t for t in eff_triggers if t.type in ("webhook", "channel")]
     port_bindings: list[str] = []
     interactive = True
     if webhook_triggers:
@@ -397,16 +418,37 @@ def run_cmd(agentfile_path: str, image: str | None, tag: str, extra_env: tuple[s
         if _k.startswith("AGENTFILE_"):
             env.setdefault(_k, _v)
 
+    # Start Telegram bridge if channel triggers are configured
+    _bridge = None
+    if channel_triggers:
+        from agentfile.core.channel_config import is_verified as _ch_verified
+        for ct in channel_triggers:
+            if "telegram" in ct.channels and _ch_verified("telegram"):
+                from agentfile.core.channel_bridge import ChannelBridge
+                _bridge_port = ct.port or 9100
+                _bridge_endpoint = ct.endpoint or "/run"
+                _bridge = ChannelBridge(agent_port=_bridge_port, agent_name=agent.name, endpoint=_bridge_endpoint)
+                if _bridge.start():
+                    from agentfile.core.channel_config import get_channel as _get_ch
+                    tg_cfg = _get_ch("telegram")
+                    bot_name = tg_cfg.get("bot_username", "?") if tg_cfg else "?"
+                    console.print(f"  [green]📱 Telegram bridge active:[/green] @{bot_name} → localhost:{_bridge_port}/run\n")
+                break
+
     res = agent.resources
-    run_container(
-        image_ref,
-        env,
-        port_bindings=port_bindings,
-        interactive=interactive,
-        cpu=res.cpu,
-        memory=res.memory,
-        warm_pool=res.warm_pool,
-        volumes=local_volumes,
-        restart_policy="on-failure:3" if use_durability else None,
-    )
+    try:
+        run_container(
+            image_ref,
+            env,
+            port_bindings=port_bindings,
+            interactive=interactive,
+            cpu=res.cpu,
+            memory=res.memory,
+            warm_pool=res.warm_pool,
+            volumes=local_volumes,
+            restart_policy="on-failure:3" if use_durability else None,
+        )
+    finally:
+        if _bridge:
+            _bridge.stop()
     console.print()
